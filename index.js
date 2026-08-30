@@ -22,15 +22,6 @@ const pool = new Pool({
 // Temporary in-memory OTP store (expires in 5 minutes)
 const otpStore = new Map();
 
-// Email Transporter setup
-const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-    }
-});
-
 // Health check route
 app.get('/', async (req, res) => {
     try {
@@ -42,6 +33,19 @@ app.get('/', async (req, res) => {
         });
     } catch (err) {
         res.status(500).json({ status: 'Database Error', error: err.message });
+    }
+});
+
+// ==========================================
+// Email Transporter setup (Upgraded for Cloud)
+// ==========================================
+const transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true, // Forces secure SSL connection
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
     }
 });
 
@@ -74,8 +78,9 @@ app.post('/api/auth/send-otp', async (req, res) => {
         await transporter.sendMail(mailOptions);
         res.json({ success: true, message: 'OTP sent successfully to your email' });
     } catch (error) {
-        console.error('Email error:', error);
-        res.status(500).json({ error: 'Failed to send OTP email' });
+        console.error('Detailed Email error:', error);
+        // This will now send the EXACT Google error to your frontend popup
+        res.status(500).json({ error: 'Mail Error: ' + error.message });
     }
 });
 
