@@ -215,6 +215,45 @@ app.post('/api/auth/pro-login', async (req, res) => {
     }
 });
 
+// ==========================================
+// 6. CREATE BOOKING ROUTE
+// ==========================================
+app.post('/api/bookings', async (req, res) => {
+    const { customerId, photographerName, category, startDate, endDate, details } = req.body;
+
+    if (!customerId || !startDate || !endDate || !category) {
+        return res.status(400).json({ error: 'Missing required booking details' });
+    }
+
+    try {
+        // Generate a random Ticket ID (e.g., TKT-8F3A2)
+        const ticketId = 'TKT-' + Math.random().toString(36).substr(2, 6).toUpperCase();
+
+        // Try to find the requested photographer's ID in the database
+        let proId = null;
+        const proRes = await pool.query('SELECT id FROM photographers WHERE name = $1', [photographerName]);
+        if (proRes.rows.length > 0) {
+            proId = proRes.rows[0].id;
+        }
+
+        // Combine the details
+        const fullDetails = `Requested Photographer: ${photographerName} | ${details}`;
+
+        // Save to Database
+        const result = await pool.query(
+            `INSERT INTO bookings 
+            (ticket_id, customer_id, photographer_id, category, start_date, end_date, event_details) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING ticket_id`,
+            [ticketId, customerId, proId, category, startDate, endDate, fullDetails]
+        );
+
+        res.json({ success: true, ticketId: result.rows[0].ticket_id });
+    } catch (err) {
+        console.error('Booking error:', err);
+        res.status(500).json({ error: 'Failed to save booking to database.' });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
