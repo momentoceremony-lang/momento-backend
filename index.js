@@ -226,28 +226,39 @@ app.post('/api/bookings', async (req, res) => {
     }
 
     try {
-        // Generate a random Ticket ID (e.g., TKT-8F3A2)
         const ticketId = 'TKT-' + Math.random().toString(36).substr(2, 6).toUpperCase();
 
-        // Try to find the requested photographer's ID in the database
         let proId = null;
         const proRes = await pool.query('SELECT id FROM photographers WHERE name = $1', [photographerName]);
-        if (proRes.rows.length > 0) {
-            proId = proRes.rows[0].id;
-        }
+        if (proRes.rows.length > 0) proId = proRes.rows[0].id;
 
-        // Combine the details
         const fullDetails = `Requested Photographer: ${photographerName} | ${details}`;
 
-        // Save to Database
-        const result = await pool.query(
-            `INSERT INTO bookings 
-            (ticket_id, customer_id, photographer_id, category, start_date, end_date, event_details) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING ticket_id`,
+        await pool.query(
+            `INSERT INTO bookings (ticket_id, customer_id, photographer_id, category, start_date, end_date, event_details) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
             [ticketId, customerId, proId, category, startDate, endDate, fullDetails]
         );
 
-        res.json({ success: true, ticketId: result.rows[0].ticket_id });
+        // Fetch customer email/name to send the confirmation email
+        const userRes = await pool.query('SELECT name, email FROM customers WHERE id = $1', [customerId]);
+        if (userRes.rows.length > 0) {
+            const user = userRes.rows[0];
+            
+            // Trigger Google Apps Script for Booking Confirmation Email (Fire and Forget)
+            fetch(process.env.APPS_SCRIPT_URL, {
+                method: 'POST',
+                body: JSON.stringify({
+                    action: 'booking',
+                    email: user.email,
+                    name: user.name,
+                    photographerName: photographerName,
+                    ticketId: ticketId
+                })
+            }).catch(err => console.error("Apps Script Email Trigger Failed:", err));
+        }
+
+        res.json({ success: true, ticketId: ticketId });
     } catch (err) {
         console.error('Booking error:', err);
         res.status(500).json({ error: 'Failed to save booking to database.' });
