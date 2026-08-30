@@ -37,15 +37,18 @@ app.get('/', async (req, res) => {
 });
 
 // ==========================================
-// Email Transporter setup (Upgraded for Cloud)
+// Email Transporter setup (Cloud-Optimized TLS)
 // ==========================================
 const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
-    port: 465,
-    secure: true, // Forces secure SSL connection
+    port: 587,
+    secure: false, // true for 465, false for 587 (uses modern STARTTLS)
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
+    },
+    tls: {
+        rejectUnauthorized: false // Helps bypass cloud firewall timeouts
     }
 });
 
