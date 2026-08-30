@@ -40,6 +40,7 @@ app.post('/api/auth/send-otp', async (req, res) => {
     try {
         await fetch(process.env.APPS_SCRIPT_URL, {
             method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'otp', email: email, otp: otp })
         });
         res.json({ success: true, message: 'OTP sent successfully' });
@@ -71,7 +72,7 @@ app.post('/api/auth/register', async (req, res) => {
         );
 
         otpStore.delete(email); 
-        const token = jwt.sign({ id: result.rows[0].id, role: 'customer' }, process.env.JWT_SECRET, { expiresIn: '30d' });
+        const token = jwt.sign({ id: result.rows[0].id, role: 'customer' }, process.env.JWT_SECRET || 'momento_fallback', { expiresIn: '30d' });
         res.json({ success: true, user: result.rows[0], token });
     } catch (err) {
         res.status(500).json({ error: 'Server error during registration' });
@@ -90,7 +91,7 @@ app.post('/api/auth/login', async (req, res) => {
         const isMatch = await bcrypt.compare(password, userRes.rows[0].password_hash);
         if (!isMatch) return res.status(400).json({ error: 'Invalid email or password' });
 
-        const token = jwt.sign({ id: userRes.rows[0].id, role: 'customer' }, process.env.JWT_SECRET, { expiresIn: '30d' });
+        const token = jwt.sign({ id: userRes.rows[0].id, role: 'customer' }, process.env.JWT_SECRET || 'momento_fallback', { expiresIn: '30d' });
         res.json({ success: true, user: { id: userRes.rows[0].id, name: userRes.rows[0].name, email: userRes.rows[0].email, phone: userRes.rows[0].phone }, token });
     } catch (err) {
         res.status(500).json({ error: 'Server error during login' });
@@ -119,7 +120,7 @@ app.post('/api/auth/pro-register', async (req, res) => {
         );
 
         otpStore.delete(email); 
-        const token = jwt.sign({ id: result.rows[0].id, role: 'photographer' }, process.env.JWT_SECRET, { expiresIn: '30d' });
+        const token = jwt.sign({ id: result.rows[0].id, role: 'photographer' }, process.env.JWT_SECRET || 'momento_fallback', { expiresIn: '30d' });
         res.json({ success: true, user: result.rows[0], token });
     } catch (err) {
         res.status(500).json({ error: 'Server error during Pro registration' });
@@ -138,7 +139,7 @@ app.post('/api/auth/pro-login', async (req, res) => {
         const isMatch = await bcrypt.compare(password, userRes.rows[0].password_hash);
         if (!isMatch) return res.status(400).json({ error: 'Invalid email or password' });
 
-        const token = jwt.sign({ id: userRes.rows[0].id, role: 'photographer' }, process.env.JWT_SECRET, { expiresIn: '30d' });
+        const token = jwt.sign({ id: userRes.rows[0].id, role: 'photographer' }, process.env.JWT_SECRET || 'momento_fallback', { expiresIn: '30d' });
         res.json({ success: true, user: { id: userRes.rows[0].id, name: userRes.rows[0].name, email: userRes.rows[0].email, phone: userRes.rows[0].phone }, token });
     } catch (err) {
         res.status(500).json({ error: 'Server error during Pro login' });
@@ -169,6 +170,7 @@ app.post('/api/bookings', async (req, res) => {
         if (userRes.rows.length > 0) {
             fetch(process.env.APPS_SCRIPT_URL, {
                 method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     action: 'booking',
                     email: userRes.rows[0].email,
