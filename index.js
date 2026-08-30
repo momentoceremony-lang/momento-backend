@@ -136,6 +136,85 @@ app.post('/api/auth/login', async (req, res) => {
     }
 });
 
+// ==========================================
+// 4. PHOTOGRAPHER REGISTRATION ROUTE
+// ==========================================
+app.post('/api/auth/pro-register', async (req, res) => {
+    const { name, email, phone, password, otp } = req.body;
+
+    if (!name || !email || !phone || !password || !otp) {
+        return res.status(400).json({ error: 'All fields are required' });
+    }
+
+    const storedData = otpStore.get(email);
+    if (!storedData || storedData.otp !== otp || Date.now() > storedData.expiresAt) {
+        return res.status(400).json({ error: 'Invalid or expired OTP' });
+    }
+
+    try {
+        const existing = await pool.query('SELECT id FROM photographers WHERE email = $1', [email]);
+        if (existing.rows.length > 0) {
+            return res.status(400).json({ error: 'Email already registered as a Photographer.' });
+        }
+
+        const salt = await bcrypt.genSalt(10);
+        const passwordHash = await bcrypt.hash(password, salt);
+
+        const result = await pool.query(
+            'INSERT INTO photographers (name, email, phone, password_hash, is_verified) VALUES ($1, $2, $3, $4, false) RETURNING id, name, email, phone',
+            [name, email, phone, passwordHash]
+        );
+
+        otpStore.delete(email); 
+
+        const token = jwt.sign(
+            { id: result.rows[0].id, role: 'photographer' },
+            process.env.JWT_SECRET || 'fallback_secret',
+            { expiresIn: '30d' }
+        );
+
+        res.json({ success: true, user: result.rows[0], token });
+    } catch (err) {
+        console.error('Pro Registration error:', err);
+        res.status(500).json({ error: 'Server error during registration' });
+    }
+});
+
+// ==========================================
+// 5. PHOTOGRAPHER LOGIN ROUTE
+// ==========================================
+app.post('/api/auth/pro-login', async (req, res) => {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+        return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    try {
+        const userRes = await pool.query('SELECT * FROM photographers WHERE email = $1', [email]);
+        if (userRes.rows.length === 0) {
+            return res.status(400).json({ error: 'Invalid email or password' });
+        }
+
+        const user = userRes.rows[0];
+        const isMatch = await bcrypt.compare(password, user.password_hash);
+        if (!isMatch) {
+            return res.status(400).json({ error: 'Invalid email or password' });
+        }
+
+        const token = jwt.sign(
+            { id: user.id, role: 'photographer' },
+            process.env.JWT_SECRET || 'fallback_secret',
+            { expiresIn: '30d' }
+        );
+
+        res.json({ success: true, user: { id: user.id, name: user.name, email: user.email, phone: user.phone }, token });
+    } catch (err) {
+        console.error('Pro Login error:', err);
+        res.status(500).json({ error: 'Server error during login' });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
