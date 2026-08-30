@@ -187,6 +187,7 @@ app.post('/api/bookings', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+// Force Railway to expose the port to the public internet
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Momento Server running and exposed on port ${PORT}`);
 });
