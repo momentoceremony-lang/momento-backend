@@ -9,7 +9,7 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
@@ -17,6 +17,26 @@ const pool = new Pool({
 });
 
 const otpStore = new Map();
+
+// Auto-Migrate Database Columns on Startup
+async function initializeDB() {
+    try {
+        await pool.query(`
+            ALTER TABLE photographers 
+            ADD COLUMN IF NOT EXISTS bio TEXT,
+            ADD COLUMN IF NOT EXISTS dp_url TEXT,
+            ADD COLUMN IF NOT EXISTS banner_url TEXT,
+            ADD COLUMN IF NOT EXISTS specialties JSONB DEFAULT '[]',
+            ADD COLUMN IF NOT EXISTS pricing JSONB DEFAULT '{}',
+            ADD COLUMN IF NOT EXISTS best_shots JSONB DEFAULT '{}',
+            ADD COLUMN IF NOT EXISTS gallery JSONB DEFAULT '[]'
+        `);
+        console.log("Database schema is up to date.");
+    } catch (err) {
+        console.error("DB Initialization Error:", err);
+    }
+}
+initializeDB();
 
 app.get('/', async (req, res) => {
     try {
@@ -187,7 +207,40 @@ app.post('/api/bookings', async (req, res) => {
     }
 });
 
-// Force Railway to expose the port to the public internet
+// ==========================================
+// 7. SAVE PHOTOGRAPHER PROFILE
+// ==========================================
+app.post('/api/pro/profile', async (req, res) => {
+    const { proId, bio, dp_url, banner_url, specialties, pricing, best_shots, gallery } = req.body;
+    try {
+        await pool.query(
+            `UPDATE photographers 
+             SET bio = $1, dp_url = $2, banner_url = $3, specialties = $4, pricing = $5, best_shots = $6, gallery = $7
+             WHERE id = $8`,
+            [bio, dp_url, banner_url, JSON.stringify(specialties), JSON.stringify(pricing), JSON.stringify(best_shots), JSON.stringify(gallery), proId]
+        );
+        res.json({ success: true, message: 'Profile updated successfully' });
+    } catch (error) {
+        console.error('Profile Save Error:', error);
+        res.status(500).json({ error: 'Failed to save profile' });
+    }
+});
+
+// ==========================================
+// 8. FETCH ALL PHOTOGRAPHERS (FOR HOMEPAGE)
+// ==========================================
+app.get('/api/photographers', async (req, res) => {
+    try {
+        // Fetches all photographers who have uploaded at least a DP
+        const result = await pool.query('SELECT id, name, bio, dp_url, banner_url, specialties, best_shots, gallery, pricing FROM photographers WHERE dp_url IS NOT NULL');
+        res.json({ success: true, data: result.rows });
+    } catch (error) {
+        console.error('Fetch Pros Error:', error);
+        res.status(500).json({ error: 'Failed to fetch photographers' });
+    }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Momento Server running and exposed on port ${PORT}`);
 });
+
