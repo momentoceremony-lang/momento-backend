@@ -213,16 +213,24 @@ app.post('/api/bookings', async (req, res) => {
 app.post('/api/pro/profile', async (req, res) => {
     const { proId, bio, dp_url, banner_url, specialties, pricing, best_shots, gallery } = req.body;
     try {
+        // We add ::jsonb to force Postgres to accept the stringified arrays/objects safely
         await pool.query(
             `UPDATE photographers 
-             SET bio = $1, dp_url = $2, banner_url = $3, specialties = $4, pricing = $5, best_shots = $6, gallery = $7
+             SET bio = $1, 
+                 dp_url = $2, 
+                 banner_url = $3, 
+                 specialties = $4::jsonb, 
+                 pricing = $5::jsonb, 
+                 best_shots = $6::jsonb, 
+                 gallery = $7::jsonb
              WHERE id = $8`,
             [bio, dp_url, banner_url, JSON.stringify(specialties), JSON.stringify(pricing), JSON.stringify(best_shots), JSON.stringify(gallery), proId]
         );
         res.json({ success: true, message: 'Profile updated successfully' });
     } catch (error) {
         console.error('Profile Save Error:', error);
-        res.status(500).json({ error: 'Failed to save profile' });
+        // This sends the EXACT database error to your frontend popup so we know what went wrong
+        res.status(500).json({ error: 'DB Error: ' + error.message });
     }
 });
 
