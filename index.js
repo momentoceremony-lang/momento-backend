@@ -271,6 +271,55 @@ app.get('/api/pro/profile/:id', async (req, res) => {
     }
 });
 
+// ==========================================
+// 10. CHECK PENDING BOOKINGS (FOR QUITTING)
+// ==========================================
+app.get('/api/pro/check-bookings/:id', async (req, res) => {
+    try {
+        // Count bookings that exist for this photographer
+        const result = await pool.query('SELECT COUNT(*) FROM bookings WHERE photographer_id = $1', [req.params.id]);
+        const pendingCount = parseInt(result.rows[0].count);
+        res.json({ success: true, pendingCount });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to check active bookings.' });
+    }
+});
+
+// ==========================================
+// 11. PROCESS QUIT & DELETE ACCOUNT
+// ==========================================
+app.post('/api/pro/quit', async (req, res) => {
+    const { proId, email, otp, reason, proName } = req.body;
+    
+    // 1. Verify OTP
+    const stored = otpStore.get(email);
+    if (!stored || stored.otp !== otp || Date.now() > stored.expiresAt) {
+        return res.status(400).json({ error: 'Invalid or expired OTP' });
+    }
+
+    try {
+        // 2. Delete the profile from PostgreSQL
+        await pool.query('DELETE FROM photographers WHERE id = $1', [proId]);
+        otpStore.delete(email);
+
+        // 3. Trigger Apps Script for CRM notification & Thank You Email
+        fetch(process.env.APPS_SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                action: 'quit', 
+                email: email, 
+                name: proName,
+                reason: reason 
+            })
+        }).catch(err => console.error("Apps Script Quit Notification Error:", err));
+
+        res.json({ success: true, message: 'Account successfully deactivated.' });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to process account deletion.' });
+    }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Momento Server running and exposed on port ${PORT}`);
 });
