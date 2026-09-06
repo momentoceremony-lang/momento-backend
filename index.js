@@ -176,17 +176,37 @@ app.post('/api/auth/pro-login', async (req, res) => {
 });
 
 // ==========================================
-// 6. CREATE BOOKING & EMAIL TICKET
+// 6. CREATE BOOKING & EMAIL TICKET (UPDATED)
 // ==========================================
 app.post('/api/bookings', async (req, res) => {
     const { customerId, photographerName, category, startDate, endDate, details } = req.body;
 
     try {
-        const ticketId = 'TKT-' + Math.random().toString(36).substr(2, 6).toUpperCase();
+        // 1. Get the Photographer's ID
         let proId = null;
         const proRes = await pool.query('SELECT id FROM photographers WHERE name = $1', [photographerName]);
-        if (proRes.rows.length > 0) proId = proRes.rows[0].id;
+        if (proRes.rows.length > 0) {
+            proId = proRes.rows[0].id;
+        } else {
+            return res.status(400).json({ error: 'Artist not found in the system.' });
+        }
 
+        // 2. Overlap Check: Prevent double-booking
+        // This queries if there is an existing booking for this pro where the dates intersect
+        const overlapCheck = await pool.query(
+            `SELECT ticket_id FROM bookings 
+             WHERE photographer_id = $1 
+             AND start_date <= $3 
+             AND end_date >= $2`,
+            [proId, startDate, endDate]
+        );
+
+        if (overlapCheck.rows.length > 0) {
+            return res.status(400).json({ error: `${photographerName} is already booked for these dates. Please choose different dates or select another artist.` });
+        }
+
+        // 3. Generate Ticket and Insert
+        const ticketId = 'TKT-' + Math.random().toString(36).substr(2, 6).toUpperCase();
         const fullDetails = `Requested Photographer: ${photographerName} | ${details}`;
 
         await pool.query(
@@ -195,6 +215,7 @@ app.post('/api/bookings', async (req, res) => {
             [ticketId, customerId, proId, category, startDate, endDate, fullDetails]
         );
 
+        // 4. Trigger Apps Script Email
         const userRes = await pool.query('SELECT name, email FROM customers WHERE id = $1', [customerId]);
         if (userRes.rows.length > 0) {
             fetch(process.env.APPS_SCRIPT_URL, {
@@ -212,7 +233,8 @@ app.post('/api/bookings', async (req, res) => {
 
         res.json({ success: true, ticketId: ticketId });
     } catch (err) {
-        res.status(500).json({ error: 'Failed to save booking to database.' });
+        console.error("Booking Error:", err);
+        res.status(500).json({ error: 'Failed to process booking request.' });
     }
 });
 
