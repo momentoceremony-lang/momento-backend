@@ -18,29 +18,21 @@ const pool = new Pool({
 
 const otpStore = new Map();
 
-// Auto-Migrate Database Columns on Startup
+// Auto-Migrate Database Columns on Startup (SAFE VERSION)
 async function initializeDB() {
     try {
-        // 1. Drop the old conflicting columns if they exist
+        // Only add columns if they don't exist. Never drop existing data.
         await pool.query(`
-            ALTER TABLE photographers DROP COLUMN IF EXISTS specialties;
-            ALTER TABLE photographers DROP COLUMN IF EXISTS pricing;
-            ALTER TABLE photographers DROP COLUMN IF EXISTS best_shots;
-            ALTER TABLE photographers DROP COLUMN IF EXISTS gallery;
-        `);
-
-        // 2. Recreate them with the strict JSONB format required by our new system
-        await pool.query(`
-            ALTER TABLE photographers ADD COLUMN specialties JSONB DEFAULT '[]';
-            ALTER TABLE photographers ADD COLUMN pricing JSONB DEFAULT '{}';
-            ALTER TABLE photographers ADD COLUMN best_shots JSONB DEFAULT '{}';
-            ALTER TABLE photographers ADD COLUMN gallery JSONB DEFAULT '[]';
+            ALTER TABLE photographers ADD COLUMN IF NOT EXISTS specialties JSONB DEFAULT '[]';
+            ALTER TABLE photographers ADD COLUMN IF NOT EXISTS pricing JSONB DEFAULT '{}';
+            ALTER TABLE photographers ADD COLUMN IF NOT EXISTS best_shots JSONB DEFAULT '{}';
+            ALTER TABLE photographers ADD COLUMN IF NOT EXISTS gallery JSONB DEFAULT '[]';
             
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS bio TEXT;
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS dp_url TEXT;
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS banner_url TEXT;
         `);
-        console.log("Database schema reset to JSONB successfully.");
+        console.log("Database schema verified successfully. No data dropped.");
     } catch (err) {
         console.error("DB Initialization Error:", err);
     }
