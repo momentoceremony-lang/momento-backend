@@ -109,32 +109,100 @@ app.post('/api/auth/send-otp', async (req, res) => {
 // 2. CUSTOMER REGISTRATION
 // ==========================================
 app.post('/api/auth/register', async (req, res) => {
-    // ... (Keep existing customer registration code)
+    const { name, email, phone, password, otp } = req.body;
+    const stored = otpStore.get(email);
+    
+    if (!stored || stored.otp !== otp || Date.now() > stored.expiresAt) {
+        return res.status(400).json({ error: 'Invalid or expired OTP' });
+    }
+
+    try {
+        const existing = await pool.query('SELECT id FROM customers WHERE email = $1', [email]);
+        if (existing.rows.length > 0) return res.status(400).json({ error: 'Email already registered.' });
+
+        const hash = await bcrypt.hash(password, await bcrypt.genSalt(10));
+        const result = await pool.query(
+            'INSERT INTO customers (name, email, phone, password_hash) VALUES ($1, $2, $3, $4) RETURNING id, name, email, phone',
+            [name, email, phone, hash]
+        );
+
+        otpStore.delete(email); 
+        const token = jwt.sign({ id: result.rows[0].id, role: 'customer' }, process.env.JWT_SECRET || 'momento_fallback', { expiresIn: '30d' });
+        res.json({ success: true, user: result.rows[0], token });
+    } catch (err) {
+        res.status(500).json({ error: 'Server error during registration' });
+    }
 });
 
 // ==========================================
 // 3. CUSTOMER LOGIN 
 // ==========================================
 app.post('/api/auth/login', async (req, res) => {
-    // ... (Keep existing customer login code)
+    const { email, password } = req.body;
+    try {
+        const userRes = await pool.query('SELECT * FROM customers WHERE email = $1', [email]);
+        if (userRes.rows.length === 0) return res.status(400).json({ error: 'Invalid email or password' });
+
+        const isMatch = await bcrypt.compare(password, userRes.rows[0].password_hash);
+        if (!isMatch) return res.status(400).json({ error: 'Invalid email or password' });
+
+        const token = jwt.sign({ id: userRes.rows[0].id, role: 'customer' }, process.env.JWT_SECRET || 'momento_fallback', { expiresIn: '30d' });
+        res.json({ success: true, user: { id: userRes.rows[0].id, name: userRes.rows[0].name, email: userRes.rows[0].email, phone: userRes.rows[0].phone }, token });
+    } catch (err) {
+        res.status(500).json({ error: 'Server error during login' });
+    }
 });
 
 // ==========================================
 // 4. PHOTOGRAPHER REGISTRATION
 // ==========================================
 app.post('/api/auth/pro-register', async (req, res) => {
-     // ... (Keep existing pro registration code)
+    const { name, email, phone, password, otp } = req.body;
+    const stored = otpStore.get(email);
+    
+    if (!stored || stored.otp !== otp || Date.now() > stored.expiresAt) {
+        return res.status(400).json({ error: 'Invalid or expired OTP' });
+    }
+
+    try {
+        const existing = await pool.query('SELECT id FROM photographers WHERE email = $1', [email]);
+        if (existing.rows.length > 0) return res.status(400).json({ error: 'Email already registered as Pro.' });
+
+        const hash = await bcrypt.hash(password, await bcrypt.genSalt(10));
+        const result = await pool.query(
+            'INSERT INTO photographers (name, email, phone, password_hash, is_verified) VALUES ($1, $2, $3, $4, false) RETURNING id, name, email, phone',
+            [name, email, phone, hash]
+        );
+
+        otpStore.delete(email); 
+        const token = jwt.sign({ id: result.rows[0].id, role: 'photographer' }, process.env.JWT_SECRET || 'momento_fallback', { expiresIn: '30d' });
+        res.json({ success: true, user: result.rows[0], token });
+    } catch (err) {
+        res.status(500).json({ error: 'Server error during Pro registration' });
+    }
 });
 
 // ==========================================
 // 5. PHOTOGRAPHER LOGIN
 // ==========================================
 app.post('/api/auth/pro-login', async (req, res) => {
-    // ... (Keep existing pro login code)
+    const { email, password } = req.body;
+    try {
+        const userRes = await pool.query('SELECT * FROM photographers WHERE email = $1', [email]);
+        if (userRes.rows.length === 0) return res.status(400).json({ error: 'Invalid email or password' });
+
+        const isMatch = await bcrypt.compare(password, userRes.rows[0].password_hash);
+        if (!isMatch) return res.status(400).json({ error: 'Invalid email or password' });
+
+        const token = jwt.sign({ id: userRes.rows[0].id, role: 'photographer' }, process.env.JWT_SECRET || 'momento_fallback', { expiresIn: '30d' });
+        res.json({ success: true, user: { id: userRes.rows[0].id, name: userRes.rows[0].name, email: userRes.rows[0].email, phone: userRes.rows[0].phone }, token });
+    } catch (err) {
+        res.status(500).json({ error: 'Server error during Pro login' });
+    }
 });
 
 // ==========================================
-// 6. CREATE BOOKING & EMAIL TICKET (Via Brevo & Sheets Backup)
+// 6. CREATE BOOKING & EMAIL TICKET
 // ==========================================
 app.post('/api/bookings', async (req, res) => {
     const { customerId, photographerName, category, startDate, endDate, details } = req.body;
@@ -174,7 +242,6 @@ app.post('/api/bookings', async (req, res) => {
             const customerEmail = userRes.rows[0].email;
             const customerName = userRes.rows[0].name;
 
-            // Send Booking Email via Brevo
             const subject = `Booking Request Received: ${ticketId}`;
             const htmlContent = `
                 <div style="font-family: Arial, sans-serif; padding: 30px; background-color: #fcf9f6; color: #5a4049; border-radius: 10px; max-width: 500px; margin: auto; border: 1px solid #eaddd7;">
@@ -191,7 +258,6 @@ app.post('/api/bookings', async (req, res) => {
             `;
             await sendEmailViaBrevo(customerEmail, subject, htmlContent).catch(err => console.error("Email Error:", err));
             
-            // Backup to Google Sheets
             fetch(process.env.APPS_SCRIPT_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -218,32 +284,69 @@ app.post('/api/bookings', async (req, res) => {
 // 7. SAVE PHOTOGRAPHER PROFILE
 // ==========================================
 app.post('/api/pro/profile', async (req, res) => {
-    // ... (Keep existing profile save code)
+    const { proId, bio, dp_url, banner_url, specialties, pricing, best_shots, gallery } = req.body;
+    try {
+        await pool.query(
+            `UPDATE photographers 
+             SET bio = $1, 
+                 dp_url = $2, 
+                 banner_url = $3, 
+                 specialties = $4::jsonb, 
+                 pricing = $5::jsonb, 
+                 best_shots = $6::jsonb, 
+                 gallery = $7::jsonb
+             WHERE id = $8`,
+            [bio, dp_url, banner_url, JSON.stringify(specialties), JSON.stringify(pricing), JSON.stringify(best_shots), JSON.stringify(gallery), proId]
+        );
+        res.json({ success: true, message: 'Profile updated successfully' });
+    } catch (error) {
+        console.error('Profile Save Error:', error);
+        res.status(500).json({ error: 'DB Error: ' + error.message });
+    }
 });
 
 // ==========================================
-// 8. FETCH ALL PHOTOGRAPHERS (FOR HOMEPAGE)
+// 8. FETCH ALL PHOTOGRAPHERS
 // ==========================================
 app.get('/api/photographers', async (req, res) => {
-     // ... (Keep existing fetch all pros code)
+    try {
+        const result = await pool.query('SELECT id, name, bio, dp_url, banner_url, specialties, best_shots, gallery, pricing FROM photographers WHERE dp_url IS NOT NULL');
+        res.json({ success: true, data: result.rows });
+    } catch (error) {
+        console.error('Fetch Pros Error:', error);
+        res.status(500).json({ error: 'Failed to fetch photographers' });
+    }
 });
 
 // ==========================================
-// 9. FETCH SINGLE PRO PROFILE (FOR DASHBOARD)
+// 9. FETCH SINGLE PRO PROFILE
 // ==========================================
 app.get('/api/pro/profile/:id', async (req, res) => {
-     // ... (Keep existing fetch single pro code)
+    try {
+        const result = await pool.query('SELECT * FROM photographers WHERE id = $1', [req.params.id]);
+        if (result.rows.length === 0) return res.status(404).json({ error: 'Profile not found' });
+        res.json({ success: true, data: result.rows[0] });
+    } catch (error) {
+        console.error('Fetch Single Pro Error:', error);
+        res.status(500).json({ error: 'Failed to fetch profile data' });
+    }
 });
 
 // ==========================================
-// 10. CHECK PENDING BOOKINGS (FOR QUITTING)
+// 10. CHECK PENDING BOOKINGS
 // ==========================================
 app.get('/api/pro/check-bookings/:id', async (req, res) => {
-     // ... (Keep existing pending booking check code)
+    try {
+        const result = await pool.query('SELECT COUNT(*) FROM bookings WHERE photographer_id = $1', [req.params.id]);
+        const pendingCount = parseInt(result.rows[0].count);
+        res.json({ success: true, pendingCount });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to check active bookings.' });
+    }
 });
 
 // ==========================================
-// 11. PROCESS QUIT & DELETE ACCOUNT (Via Brevo)
+// 11. PROCESS QUIT & DELETE ACCOUNT
 // ==========================================
 app.post('/api/pro/quit', async (req, res) => {
     const { proId, email, otp, reason, proName } = req.body;
@@ -257,7 +360,6 @@ app.post('/api/pro/quit', async (req, res) => {
         await pool.query('DELETE FROM photographers WHERE id = $1', [proId]);
         otpStore.delete(email);
 
-        // Send Quit Email via Brevo
         const subject = "Account Deactivation Confirmed - Momento Photography";
         const htmlContent = `
             <div style="font-family: Arial, sans-serif; padding: 30px; background-color: #fcf9f6; color: #5a4049; border-radius: 10px; max-width: 500px; margin: auto; border: 1px solid #eaddd7;">
@@ -270,7 +372,6 @@ app.post('/api/pro/quit', async (req, res) => {
         `;
         await sendEmailViaBrevo(email, subject, htmlContent).catch(err => console.error("Email Error:", err));
 
-        // Backup Quit Log to Sheets
         fetch(process.env.APPS_SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
