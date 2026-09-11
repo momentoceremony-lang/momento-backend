@@ -50,6 +50,7 @@ async function sendEmailViaBrevo(toEmail, subject, htmlContent) {
 }
 
 // Auto-Migrate Database Columns on Startup
+// Replace your existing initializeDB function with this:
 async function initializeDB() {
     try {
         await pool.query(`
@@ -60,12 +61,14 @@ async function initializeDB() {
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS bio TEXT;
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS dp_url TEXT;
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS banner_url TEXT;
+            ALTER TABLE photographers ADD COLUMN IF NOT EXISTS pro_type VARCHAR(50);
         `);
         console.log("Database schema verified successfully. No data dropped.");
     } catch (err) {
         console.error("DB Initialization Error:", err);
     }
 }
+
 initializeDB();
 
 app.get('/', async (req, res) => {
@@ -122,8 +125,8 @@ app.post('/api/auth/register', async (req, res) => {
 
         const hash = await bcrypt.hash(password, await bcrypt.genSalt(10));
         const result = await pool.query(
-            'INSERT INTO customers (name, email, phone, password_hash) VALUES ($1, $2, $3, $4) RETURNING id, name, email, phone',
-            [name, email, phone, hash]
+            'INSERT INTO photographers (name, email, phone, password_hash, is_verified, pro_type) VALUES ($1, $2, $3, $4, false, $5) RETURNING id, name, email, phone, pro_type',
+            [name, email, phone, hash, req.body.proType]
         );
 
         otpStore.delete(email); 
@@ -310,7 +313,7 @@ app.post('/api/pro/profile', async (req, res) => {
 // ==========================================
 app.get('/api/photographers', async (req, res) => {
     try {
-        const result = await pool.query('SELECT id, name, bio, dp_url, banner_url, specialties, best_shots, gallery, pricing FROM photographers WHERE dp_url IS NOT NULL');
+        const result = await pool.query('SELECT id, name, bio, dp_url, banner_url, specialties, best_shots, gallery, pricing, pro_type as "proType" FROM photographers WHERE dp_url IS NOT NULL');
         res.json({ success: true, data: result.rows });
     } catch (error) {
         console.error('Fetch Pros Error:', error);
@@ -323,7 +326,7 @@ app.get('/api/photographers', async (req, res) => {
 // ==========================================
 app.get('/api/pro/profile/:id', async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM photographers WHERE id = $1', [req.params.id]);
+        const result = await pool.query('SELECT id, name, email, phone, bio, dp_url, banner_url, specialties, best_shots, gallery, pricing, pro_type as "proType" FROM photographers WHERE id = $1', [req.params.id]);
         if (result.rows.length === 0) return res.status(404).json({ error: 'Profile not found' });
         res.json({ success: true, data: result.rows[0] });
     } catch (error) {
