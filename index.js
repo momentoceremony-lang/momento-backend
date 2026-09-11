@@ -124,9 +124,10 @@ app.post('/api/auth/register', async (req, res) => {
         if (existing.rows.length > 0) return res.status(400).json({ error: 'Email already registered.' });
 
         const hash = await bcrypt.hash(password, await bcrypt.genSalt(10));
+        // FIXED: Restored to inserting into the 'customers' table
         const result = await pool.query(
-            'INSERT INTO photographers (name, email, phone, password_hash, is_verified, pro_type) VALUES ($1, $2, $3, $4, false, $5) RETURNING id, name, email, phone, pro_type',
-            [name, email, phone, hash, req.body.proType]
+            'INSERT INTO customers (name, email, phone, password_hash) VALUES ($1, $2, $3, $4) RETURNING id, name, email, phone',
+            [name, email, phone, hash]
         );
 
         otpStore.delete(email); 
@@ -160,7 +161,7 @@ app.post('/api/auth/login', async (req, res) => {
 // 4. PHOTOGRAPHER REGISTRATION
 // ==========================================
 app.post('/api/auth/pro-register', async (req, res) => {
-    const { name, email, phone, password, otp } = req.body;
+    const { name, email, phone, password, otp, proType } = req.body;
     const stored = otpStore.get(email);
     
     if (!stored || stored.otp !== otp || Date.now() > stored.expiresAt) {
@@ -172,9 +173,10 @@ app.post('/api/auth/pro-register', async (req, res) => {
         if (existing.rows.length > 0) return res.status(400).json({ error: 'Email already registered as Pro.' });
 
         const hash = await bcrypt.hash(password, await bcrypt.genSalt(10));
+        // FIXED: Now correctly saves the 'pro_type' into the database
         const result = await pool.query(
-            'INSERT INTO photographers (name, email, phone, password_hash, is_verified) VALUES ($1, $2, $3, $4, false) RETURNING id, name, email, phone',
-            [name, email, phone, hash]
+            'INSERT INTO photographers (name, email, phone, password_hash, is_verified, pro_type) VALUES ($1, $2, $3, $4, false, $5) RETURNING id, name, email, phone, pro_type',
+            [name, email, phone, hash, proType]
         );
 
         otpStore.delete(email); 
