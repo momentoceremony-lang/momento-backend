@@ -50,7 +50,6 @@ async function sendEmailViaBrevo(toEmail, subject, htmlContent) {
 }
 
 // Auto-Migrate Database Columns on Startup
-// Replace your existing initializeDB function with this:
 async function initializeDB() {
     try {
         await pool.query(`
@@ -62,6 +61,11 @@ async function initializeDB() {
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS dp_url TEXT;
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS banner_url TEXT;
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS pro_type VARCHAR(50);
+            -- NEW COLUMNS FOR BOOKINGS
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS artist_type VARCHAR(50);
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS latitude DECIMAL(10, 8);
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS longitude DECIMAL(11, 8);
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS landmark TEXT;
         `);
         console.log("Database schema verified successfully. No data dropped.");
     } catch (err) {
@@ -210,7 +214,7 @@ app.post('/api/auth/pro-login', async (req, res) => {
 // 6. CREATE BOOKING & EMAIL TICKET
 // ==========================================
 app.post('/api/bookings', async (req, res) => {
-    const { customerId, photographerName, category, startDate, endDate, details } = req.body;
+    const { customerId, photographerName, artistType, category, startDate, endDate, latitude, longitude, landmark, details } = req.body;
 
     try {
         let proId = null;
@@ -234,12 +238,14 @@ app.post('/api/bookings', async (req, res) => {
         }
 
         const ticketId = 'TKT-' + Math.random().toString(36).substr(2, 6).toUpperCase();
-        const fullDetails = `Requested Photographer: ${photographerName} | ${details}`;
+        // Pack all details into the legacy event_details column just in case, while also saving properly to the new columns
+        const fullDetails = `Requested: ${photographerName} (${artistType}) | Landmark: ${landmark} | ${details}`;
 
+        // Insert including the new Map and Artist Type columns
         await pool.query(
-            `INSERT INTO bookings (ticket_id, customer_id, photographer_id, category, start_date, end_date, event_details) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [ticketId, customerId, proId, category, startDate, endDate, fullDetails]
+            `INSERT INTO bookings (ticket_id, customer_id, photographer_id, artist_type, category, start_date, end_date, latitude, longitude, landmark, event_details) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            [ticketId, customerId, proId, artistType, category, startDate, endDate, latitude, longitude, landmark, fullDetails]
         );
 
         const userRes = await pool.query('SELECT name, email FROM customers WHERE id = $1', [customerId]);
@@ -248,21 +254,34 @@ app.post('/api/bookings', async (req, res) => {
             const customerName = userRes.rows[0].name;
 
             const subject = `Booking Request Received: ${ticketId}`;
+            const mapsLink = latitude && longitude ? `https://www.google.com/maps?q=${latitude},${longitude}` : '';
+            
+            // Sweet looking email with the new details
             const htmlContent = `
                 <div style="font-family: Arial, sans-serif; padding: 30px; background-color: #fcf9f6; color: #5a4049; border-radius: 10px; max-width: 500px; margin: auto; border: 1px solid #eaddd7;">
                     <h2 style="color: #5a4049; border-bottom: 2px solid #d19a8a; padding-bottom: 10px;">Booking Request Received</h2>
                     <p>Hello <strong>${customerName}</strong>,</p>
-                    <p>Thank you for choosing Momento Photography. We have received your booking request for <strong>${photographerName}</strong>.</p>
+                    <p>Thank you for choosing Momento. We have received your booking request for <strong>${photographerName}</strong> (${artistType} - ${category}).</p>
+                    
                     <div style="background-color: white; padding: 15px; border-radius: 8px; margin: 20px 0; text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
                         <p style="margin: 0; font-size: 14px; opacity: 0.8;">Your Ticket ID</p>
                         <h2 style="color: #d19a8a; margin: 5px 0 0 0; letter-spacing: 2px;">${ticketId}</h2>
                     </div>
-                    <p style="font-size: 14px; line-height: 1.6;">Our team is currently checking availability. We will get back to you shortly with a custom quotation and next steps.</p>
+                    
+                    <div style="background-color: white; padding: 15px; border-radius: 8px; margin: 20px 0; font-size: 14px; line-height: 1.6;">
+                        <strong>Dates:</strong> ${startDate} to ${endDate}<br>
+                        <strong>Location:</strong> <a href="${mapsLink}" target="_blank" style="color: #d19a8a; text-decoration: underline;">View Map Pin</a><br>
+                        <strong>Landmark:</strong> ${landmark || 'N/A'}<br>
+                        <strong>Requirements:</strong> ${details || 'N/A'}
+                    </div>
+
+                    <p style="font-size: 14px; line-height: 1.6;">Our team is reviewing the artist's availability. We will get back to you shortly with a custom quotation and next steps.</p>
                     <p style="font-size: 14px; opacity: 0.8;">Every Moment. Forever.<br>- The Momento Team</p>
                 </div>
             `;
             await sendEmailViaBrevo(customerEmail, subject, htmlContent).catch(err => console.error("Email Error:", err));
             
+            // Push everything to the Google CRM
             fetch(process.env.APPS_SCRIPT_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -271,8 +290,13 @@ app.post('/api/bookings', async (req, res) => {
                     ticketId: ticketId,
                     customerName: customerName,
                     photographerName: photographerName,
+                    artistType: artistType,
+                    category: category,
                     startDate: startDate,
                     endDate: endDate,
+                    latitude: latitude,
+                    longitude: longitude,
+                    landmark: landmark,
                     details: details
                 })
             }).catch(err => console.error("Sheets Backup Error:", err));
