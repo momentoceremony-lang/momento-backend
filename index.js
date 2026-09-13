@@ -18,6 +18,29 @@ const pool = new Pool({
 
 const otpStore = new Map();
 
+async function sendMomentoEmail(toEmail, toName, subject, htmlContent) {
+    try {
+        const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+            method: 'POST',
+            headers: {
+                'accept': 'application/json',
+                'api-key': process.env.BREVO_API_KEY,
+                'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+                sender: { name: "Momento CRM", email: "momentoceremony@gmail.com" },
+                to: [{ email: toEmail, name: toName }],
+                subject: subject,
+                htmlContent: htmlContent
+            })
+        });
+        return response.ok;
+    } catch (error) {
+        console.error("Email dispatch failed:", error);
+        return false;
+    }
+}
+
 // ==========================================
 // BREVO EMAIL HELPER FUNCTION
 // ==========================================
@@ -51,7 +74,6 @@ async function sendEmailViaBrevo(toEmail, subject, htmlContent) {
 
 async function initializeDB() {
     try {
-        // ... (Keep your existing ALTER TABLE scripts for photographers and bookings here) ...
         await pool.query(`
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS specialties JSONB DEFAULT '[]';
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS pricing JSONB DEFAULT '{}';
@@ -61,6 +83,10 @@ async function initializeDB() {
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS dp_url TEXT;
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS banner_url TEXT;
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS pro_type VARCHAR(50);
+            
+            -- NEW: VERIFICATION TRACKING COLUMNS
+            ALTER TABLE photographers ADD COLUMN IF NOT EXISTS account_status VARCHAR(20) DEFAULT 'pending';
+            ALTER TABLE photographers ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
 
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS artist_type VARCHAR(50);
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS latitude DECIMAL(10, 8);
@@ -75,6 +101,9 @@ async function initializeDB() {
                 role VARCHAR(20) NOT NULL,
                 must_reset_password BOOLEAN DEFAULT TRUE
             );
+            
+            -- Retroactively update already verified pros to avoid breaking existing accounts
+            UPDATE photographers SET account_status = 'approved' WHERE is_verified = true AND (account_status = 'pending' OR account_status IS NULL);
         `);
 
         // Inject Default CRM Accounts if they don't exist
@@ -489,21 +518,35 @@ app.post('/api/crm/reset-password', async (req, res) => {
 });
 
 // ==========================================
-// CRM: ARTIST VERIFICATION ENGINE
+// CRM: ARTIST VERIFICATION ENGINE (V2)
 // ==========================================
 app.get('/api/crm/pending-artists', async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM photographers WHERE is_verified = false ORDER BY id DESC');
-        res.json({ success: true, data: result.rows });
+        const pending = await pool.query("SELECT * FROM photographers WHERE account_status = 'pending' OR account_status IS NULL ORDER BY id DESC");
+        const rejected = await pool.query("SELECT * FROM photographers WHERE account_status = 'rejected' ORDER BY id DESC");
+        res.json({ success: true, pending: pending.rows, rejected: rejected.rows });
     } catch (err) {
-        res.status(500).json({ error: 'Failed to fetch pending artists' });
+        res.status(500).json({ error: 'Failed to fetch verification lists' });
     }
 });
 
 app.post('/api/crm/approve-artist', async (req, res) => {
     const { id } = req.body;
     try {
-        await pool.query('UPDATE photographers SET is_verified = true WHERE id = $1', [id]);
+        const query = await pool.query("UPDATE photographers SET is_verified = true, account_status = 'approved' WHERE id = $1 RETURNING name, email", [id]);
+        
+        // Dispatch Welcome Email
+        if (query.rows.length > 0) {
+            const artist = query.rows[0];
+            const html = `
+                <div style="font-family: Arial, sans-serif; color: #3C3633;">
+                    <h2 style="color: #d19a8a;">Congratulations, ${artist.name}! 🎉</h2>
+                    <p>Your Momento Professional profile has been successfully verified.</p>
+                    <p>You are now an official part of the Momento family. Customers can view your portfolio, and you are eligible to receive booking requests directly through your dashboard.</p>
+                    <br><p>Best Regards,<br><strong>The Momento Team</strong></p>
+                </div>`;
+            await sendMomentoEmail(artist.email, artist.name, "Welcome to Momento! Your Profile is Live", html);
+        }
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: 'Failed to approve artist' });
@@ -511,15 +554,28 @@ app.post('/api/crm/approve-artist', async (req, res) => {
 });
 
 app.post('/api/crm/reject-artist', async (req, res) => {
-    const { id } = req.body;
+    const { id, reason } = req.body;
     try {
-        await pool.query('DELETE FROM photographers WHERE id = $1', [id]);
+        const query = await pool.query("UPDATE photographers SET is_verified = false, account_status = 'rejected', rejection_reason = $2 WHERE id = $1 RETURNING name, email", [id, reason]);
+        
+        // Dispatch Action Required Email
+        if (query.rows.length > 0) {
+            const artist = query.rows[0];
+            const html = `
+                <div style="font-family: Arial, sans-serif; color: #3C3633;">
+                    <h2>Action Required, ${artist.name}</h2>
+                    <p>We are currently reviewing your Momento Professional application. To officially list your profile, we need you to update a few details.</p>
+                    <div style="background: #f9f9f9; padding: 15px; border-left: 4px solid #e74c3c; margin: 20px 0;">
+                        <strong>Feedback from our team:</strong><br>
+                        ${reason}
+                    </div>
+                    <p>Please log in to your Pro Dashboard, make the necessary updates, and we will automatically re-evaluate your profile.</p>
+                    <br><p>Best Regards,<br><strong>The Momento Team</strong></p>
+                </div>`;
+            await sendMomentoEmail(artist.email, artist.name, "Action Required: Update Your Momento Profile", html);
+        }
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: 'Failed to reject artist' });
     }
-});
-
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Momento Server running and exposed on port ${PORT}`);
 });
