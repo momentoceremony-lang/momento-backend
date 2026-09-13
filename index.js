@@ -579,3 +579,7 @@ app.post('/api/crm/reject-artist', async (req, res) => {
         res.status(500).json({ error: 'Failed to reject artist' });
     }
 });
+
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Momento Server running and exposed on port ${PORT}`);
+});
