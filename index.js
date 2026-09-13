@@ -107,6 +107,16 @@ async function initializeDB() {
             
             -- Retroactively update already verified pros to avoid breaking existing accounts
             UPDATE photographers SET account_status = 'approved' WHERE is_verified = true AND (account_status = 'pending' OR account_status IS NULL);
+
+            -- NEW: SYSTEM SETTINGS TABLE
+            CREATE TABLE IF NOT EXISTS system_settings (
+                id INT PRIMARY KEY,
+                maintenance_mode BOOLEAN DEFAULT FALSE
+            );
+            
+            -- Insert the default state if it doesn't exist
+            INSERT INTO system_settings (id, maintenance_mode) VALUES (1, FALSE) ON CONFLICT (id) DO NOTHING;
+            
         `);
 
         // Inject Default CRM Accounts if they don't exist
@@ -637,6 +647,31 @@ app.post('/api/crm/send-quotation', async (req, res) => {
     } catch (err) {
         console.error("Send Quotation Error:", err);
         res.status(500).json({ error: 'Failed to send quotation' });
+    }
+});
+
+// ==========================================
+// SYSTEM SETTINGS & MAINTENANCE MODE
+// ==========================================
+// Public route for the main website to check status
+app.get('/api/system/status', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT maintenance_mode FROM system_settings WHERE id = 1');
+        res.json({ maintenance: result.rows[0].maintenance_mode });
+    } catch (err) {
+        // If DB fails, assume live to prevent accidental lockouts
+        res.json({ maintenance: false }); 
+    }
+});
+
+// Protected route for the CRM to flip the switch
+app.post('/api/crm/system/maintenance', async (req, res) => {
+    const { active } = req.body;
+    try {
+        await pool.query('UPDATE system_settings SET maintenance_mode = $1 WHERE id = 1', [active]);
+        res.json({ success: true, maintenance: active });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to update system settings' });
     }
 });
 
