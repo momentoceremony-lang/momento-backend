@@ -95,6 +95,9 @@ async function initializeDB() {
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pending';
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS quotation_amount DECIMAL(10,2);
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS discount DECIMAL(10,2) DEFAULT 0;
+
+            -- NEW: Fix old test bookings that have a blank status
+            UPDATE bookings SET status = 'pending' WHERE status IS NULL;
             
             -- NEW: CRM USERS TABLE
             CREATE TABLE IF NOT EXISTS crm_users (
