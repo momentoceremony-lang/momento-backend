@@ -358,11 +358,12 @@ app.post('/api/pro/profile', async (req, res) => {
 });
 
 // ==========================================
-// 8. FETCH ALL PHOTOGRAPHERS
+// 8. FETCH ALL PHOTOGRAPHERS (PUBLIC)
 // ==========================================
 app.get('/api/photographers', async (req, res) => {
     try {
-        const result = await pool.query('SELECT id, name, bio, dp_url, banner_url, specialties, best_shots, gallery, pricing, pro_type as "proType" FROM photographers WHERE dp_url IS NOT NULL');
+        // ADDED: "AND is_verified = true" to protect the public frontend
+        const result = await pool.query('SELECT id, name, bio, dp_url, banner_url, specialties, best_shots, gallery, pricing, pro_type as "proType" FROM photographers WHERE dp_url IS NOT NULL AND is_verified = true');
         res.json({ success: true, data: result.rows });
     } catch (error) {
         console.error('Fetch Pros Error:', error);
@@ -484,6 +485,38 @@ app.post('/api/crm/reset-password', async (req, res) => {
         res.json({ success: true, message: 'Password updated successfully' });
     } catch (err) {
         res.status(500).json({ error: 'Failed to reset password' });
+    }
+});
+
+// ==========================================
+// CRM: ARTIST VERIFICATION ENGINE
+// ==========================================
+app.get('/api/crm/pending-artists', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM photographers WHERE is_verified = false ORDER BY id DESC');
+        res.json({ success: true, data: result.rows });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch pending artists' });
+    }
+});
+
+app.post('/api/crm/approve-artist', async (req, res) => {
+    const { id } = req.body;
+    try {
+        await pool.query('UPDATE photographers SET is_verified = true WHERE id = $1', [id]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to approve artist' });
+    }
+});
+
+app.post('/api/crm/reject-artist', async (req, res) => {
+    const { id } = req.body;
+    try {
+        await pool.query('DELETE FROM photographers WHERE id = $1', [id]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to reject artist' });
     }
 });
 
