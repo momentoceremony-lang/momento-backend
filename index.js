@@ -92,6 +92,9 @@ async function initializeDB() {
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS latitude DECIMAL(10, 8);
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS longitude DECIMAL(11, 8);
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS landmark TEXT;
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pending';
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS quotation_amount DECIMAL(10,2);
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS discount DECIMAL(10,2) DEFAULT 0;
             
             -- NEW: CRM USERS TABLE
             CREATE TABLE IF NOT EXISTS crm_users (
@@ -577,6 +580,63 @@ app.post('/api/crm/reject-artist', async (req, res) => {
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: 'Failed to reject artist' });
+    }
+});
+
+// ==========================================
+// CRM: BOOKING PIPELINE & QUOTATIONS
+// ==========================================
+app.get('/api/crm/bookings', async (req, res) => {
+    try {
+        // Fetch bookings and join with customer and photographer names
+        const query = `
+            SELECT b.*, 
+                   c.name as customer_name, c.email as customer_email, c.phone as customer_phone,
+                   p.name as pro_name, p.pro_type
+            FROM bookings b
+            JOIN customers c ON b.customer_id = c.id
+            JOIN photographers p ON b.photographer_id = p.id
+            ORDER BY b.id DESC
+        `;
+        const result = await pool.query(query);
+        res.json({ success: true, data: result.rows });
+    } catch (err) {
+        console.error("Fetch Bookings Error:", err);
+        res.status(500).json({ error: 'Failed to fetch bookings' });
+    }
+});
+
+app.post('/api/crm/send-quotation', async (req, res) => {
+    const { ticketId, amount, discount, customerEmail, customerName, proName } = req.body;
+    try {
+        await pool.query(
+            "UPDATE bookings SET status = 'quotation_sent', quotation_amount = $1, discount = $2 WHERE ticket_id = $3",
+            [amount, discount, ticketId]
+        );
+
+        // Send Quotation Email
+        const html = `
+            <div style="font-family: Arial, sans-serif; color: #3C3633; max-width: 500px; margin: auto; border: 1px solid #eaddd7; border-radius: 10px; padding: 30px; background-color: #fcf9f6;">
+                <h2 style="color: #d19a8a; border-bottom: 2px solid #d19a8a; padding-bottom: 10px;">Your Custom Quotation</h2>
+                <p>Hello <strong>${customerName}</strong>,</p>
+                <p>Great news! We have reviewed your booking request for <strong>${proName}</strong> (Ticket: ${ticketId}) and confirmed their availability.</p>
+                
+                <div style="background-color: white; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
+                    <p style="margin: 0; font-size: 14px; opacity: 0.8;">Total Amount Due</p>
+                    <h1 style="color: #5a4049; margin: 5px 0 0 0;">₹${amount}</h1>
+                    ${discount > 0 ? `<p style="color: #27ae60; font-size: 13px; font-weight: bold; margin-top: 5px;">Includes a ₹${discount} discount!</p>` : ''}
+                </div>
+                
+                <p>To lock in your dates, our team will contact you shortly to process the payment securely.</p>
+                <p style="font-size: 14px; opacity: 0.8; margin-top: 30px;">Every Moment. Forever.<br>- The Momento Team</p>
+            </div>`;
+            
+        await sendMomentoEmail(customerEmail, customerName, `Quotation Ready for Ticket: ${ticketId}`, html);
+        
+        res.json({ success: true });
+    } catch (err) {
+        console.error("Send Quotation Error:", err);
+        res.status(500).json({ error: 'Failed to send quotation' });
     }
 });
 
