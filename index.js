@@ -49,9 +49,9 @@ async function sendEmailViaBrevo(toEmail, subject, htmlContent) {
     return await response.json();
 }
 
-// Auto-Migrate Database Columns on Startup
 async function initializeDB() {
     try {
+        // ... (Keep your existing ALTER TABLE scripts for photographers and bookings here) ...
         await pool.query(`
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS specialties JSONB DEFAULT '[]';
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS pricing JSONB DEFAULT '{}';
@@ -61,13 +61,36 @@ async function initializeDB() {
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS dp_url TEXT;
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS banner_url TEXT;
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS pro_type VARCHAR(50);
-            -- NEW COLUMNS FOR BOOKINGS
+
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS artist_type VARCHAR(50);
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS latitude DECIMAL(10, 8);
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS longitude DECIMAL(11, 8);
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS landmark TEXT;
+            
+            -- NEW: CRM USERS TABLE
+            CREATE TABLE IF NOT EXISTS crm_users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(50) UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                role VARCHAR(20) NOT NULL,
+                must_reset_password BOOLEAN DEFAULT TRUE
+            );
         `);
-        console.log("Database schema verified successfully. No data dropped.");
+
+        // Inject Default CRM Accounts if they don't exist
+        const devCheck = await pool.query("SELECT * FROM crm_users WHERE username = 'Developer'");
+        if (devCheck.rows.length === 0) {
+            const devHash = await bcrypt.hash('DC@789', 10);
+            await pool.query("INSERT INTO crm_users (username, password_hash, role, must_reset_password) VALUES ($1, $2, $3, true)", ['Developer', devHash, 'developer']);
+        }
+
+        const adminCheck = await pool.query("SELECT * FROM crm_users WHERE username = 'Admin'");
+        if (adminCheck.rows.length === 0) {
+            const adminHash = await bcrypt.hash('Momento', 10);
+            await pool.query("INSERT INTO crm_users (username, password_hash, role, must_reset_password) VALUES ($1, $2, $3, true)", ['Admin', adminHash, 'admin']);
+        }
+
+        console.log("Database schema & CRM defaults verified successfully.");
     } catch (err) {
         console.error("DB Initialization Error:", err);
     }
@@ -415,6 +438,52 @@ app.post('/api/pro/quit', async (req, res) => {
         res.json({ success: true, message: 'Account successfully deactivated.' });
     } catch (error) {
         res.status(500).json({ error: 'Failed to process account deletion.' });
+    }
+});
+
+// ==========================================
+// CRM: LOGIN
+// ==========================================
+app.post('/api/crm/login', async (req, res) => {
+    const { username, password } = req.body;
+    try {
+        const userRes = await pool.query('SELECT * FROM crm_users WHERE username = $1', [username]);
+        if (userRes.rows.length === 0) return res.status(400).json({ error: 'Invalid credentials' });
+
+        const isMatch = await bcrypt.compare(password, userRes.rows[0].password_hash);
+        if (!isMatch) return res.status(400).json({ error: 'Invalid credentials' });
+
+        const user = userRes.rows[0];
+        const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET || 'momento_fallback', { expiresIn: '12h' });
+        
+        res.json({ 
+            success: true, 
+            token, 
+            user: { username: user.username, role: user.role, must_reset: user.must_reset_password } 
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'CRM Login Error' });
+    }
+});
+
+// ==========================================
+// CRM: FORCED PASSWORD RESET
+// ==========================================
+app.post('/api/crm/reset-password', async (req, res) => {
+    const { username, oldPassword, newPassword } = req.body;
+    try {
+        const userRes = await pool.query('SELECT * FROM crm_users WHERE username = $1', [username]);
+        if (userRes.rows.length === 0) return res.status(400).json({ error: 'User not found' });
+
+        const isMatch = await bcrypt.compare(oldPassword, userRes.rows[0].password_hash);
+        if (!isMatch) return res.status(400).json({ error: 'Authentication failed' });
+
+        const newHash = await bcrypt.hash(newPassword, 10);
+        await pool.query('UPDATE crm_users SET password_hash = $1, must_reset_password = false WHERE username = $2', [newHash, username]);
+        
+        res.json({ success: true, message: 'Password updated successfully' });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to reset password' });
     }
 });
 
