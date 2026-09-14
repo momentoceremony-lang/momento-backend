@@ -544,6 +544,7 @@ app.get('/api/crm/pending-artists', async (req, res) => {
     try {
         const pending = await pool.query("SELECT * FROM photographers WHERE account_status = 'pending' OR account_status IS NULL ORDER BY id DESC");
         const rejected = await pool.query("SELECT * FROM photographers WHERE account_status = 'rejected' ORDER BY id DESC");
+        const approved = await pool.query("SELECT * FROM photographers WHERE account_status = 'approved' ORDER BY id DESC");
         res.json({ success: true, pending: pending.rows, rejected: rejected.rows });
     } catch (err) {
         res.status(500).json({ error: 'Failed to fetch verification lists' });
