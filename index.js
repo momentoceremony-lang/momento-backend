@@ -97,6 +97,11 @@ async function initializeDB() {
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pending';
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS quotation_amount DECIMAL(10,2);
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS discount DECIMAL(10,2) DEFAULT 0;
+            
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS advance_amount DECIMAL(10,2) DEFAULT 0;
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS paid_amount DECIMAL(10,2) DEFAULT 0;
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS tracking_id TEXT;
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS courier_partner TEXT;
 
             -- NEW: Fix old test bookings that have a blank status
             UPDATE bookings SET status = 'pending' WHERE status IS NULL;
@@ -627,36 +632,88 @@ app.get('/api/crm/bookings', async (req, res) => {
 });
 
 app.post('/api/crm/send-quotation', async (req, res) => {
-    const { ticketId, amount, discount, customerEmail, customerName, proName } = req.body;
+    const { ticketId, amount, discount, advanceAmount, customerEmail, customerName, proName } = req.body;
     try {
-        await pool.query(
-            "UPDATE bookings SET status = 'quotation_sent', quotation_amount = $1, discount = $2 WHERE ticket_id = $3",
-            [amount, discount, ticketId]
-        );
+        // 1. If the Admin changed the Artist Name, look up the new Artist's ID
+        const proRes = await pool.query('SELECT id FROM photographers WHERE name = $1', [proName]);
+        let targetProId = null;
+        if (proRes.rows.length > 0) targetProId = proRes.rows[0].id;
 
-        // Send Quotation Email
+        // 2. Update the booking (Swap artist ID if found)
+        if (targetProId) {
+            await pool.query(
+                "UPDATE bookings SET status = 'quotation_sent', quotation_amount = $1, discount = $2, advance_amount = $3, photographer_id = $4 WHERE ticket_id = $5",
+                [amount, discount, advanceAmount, targetProId, ticketId]
+            );
+        } else {
+            await pool.query(
+                "UPDATE bookings SET status = 'quotation_sent', quotation_amount = $1, discount = $2, advance_amount = $3 WHERE ticket_id = $4",
+                [amount, discount, advanceAmount, ticketId]
+            );
+        }
+
+        // 3. Send the Milestone Email
         const html = `
             <div style="font-family: Arial, sans-serif; color: #3C3633; max-width: 500px; margin: auto; border: 1px solid #eaddd7; border-radius: 10px; padding: 30px; background-color: #fcf9f6;">
                 <h2 style="color: #d19a8a; border-bottom: 2px solid #d19a8a; padding-bottom: 10px;">Your Custom Quotation</h2>
                 <p>Hello <strong>${customerName}</strong>,</p>
-                <p>Great news! We have reviewed your booking request for <strong>${proName}</strong> (Ticket: ${ticketId}) and confirmed their availability.</p>
+                <p>Great news! We have reviewed your booking request and confirmed availability for <strong>${proName}</strong> (Ticket: ${ticketId}).</p>
                 
                 <div style="background-color: white; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
                     <p style="margin: 0; font-size: 14px; opacity: 0.8;">Total Amount Due</p>
-                    <h1 style="color: #5a4049; margin: 5px 0 0 0;">₹${amount}</h1>
+                    <h1 style="color: #5a4049; margin: 5px 0;">₹${amount}</h1>
+                    <p style="color: #e74c3c; font-weight: bold; margin-top: 15px; border-top: 1px dashed #ddd; padding-top: 10px;">Advance Required to Confirm Dates: ₹${advanceAmount}</p>
                     ${discount > 0 ? `<p style="color: #27ae60; font-size: 13px; font-weight: bold; margin-top: 5px;">Includes a ₹${discount} discount!</p>` : ''}
                 </div>
                 
-                <p>To lock in your dates, our team will contact you shortly to process the payment securely.</p>
+                <p>To lock in your dates, our team will contact you shortly to process the advance payment securely.</p>
                 <p style="font-size: 14px; opacity: 0.8; margin-top: 30px;">Every Moment. Forever.<br>- The Momento Team</p>
             </div>`;
             
         await sendMomentoEmail(customerEmail, customerName, `Quotation Ready for Ticket: ${ticketId}`, html);
-        
         res.json({ success: true });
     } catch (err) {
         console.error("Send Quotation Error:", err);
         res.status(500).json({ error: 'Failed to send quotation' });
+    }
+});
+
+// Route to manually mark a payment as received
+app.post('/api/crm/confirm-booking', async (req, res) => {
+    const { ticketId } = req.body;
+    try {
+        await pool.query("UPDATE bookings SET status = 'confirmed' WHERE ticket_id = $1", [ticketId]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to confirm booking' });
+    }
+});
+
+// Route to finalize the job and send physical deliverables
+app.post('/api/crm/complete-booking', async (req, res) => {
+    const { ticketId, trackingId, courier, customerEmail, customerName } = req.body;
+    try {
+        await pool.query(
+            "UPDATE bookings SET status = 'completed', tracking_id = $1, courier_partner = $2 WHERE ticket_id = $3",
+            [trackingId, courier, ticketId]
+        );
+
+        const html = `
+            <div style="font-family: Arial, sans-serif; color: #3C3633; max-width: 500px; margin: auto; border: 1px solid #eaddd7; border-radius: 10px; padding: 30px; background-color: #fcf9f6;">
+                <h2 style="color: #8e44ad; border-bottom: 2px solid #8e44ad; padding-bottom: 10px;">Your Memories Are on the Way!</h2>
+                <p>Hello <strong>${customerName}</strong>,</p>
+                <p>Your deliverables (Pen Drive / Album) for Ticket <strong>${ticketId}</strong> have been finalized and dispatched.</p>
+                <div style="background-color: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
+                    <p><strong>Courier Partner:</strong> ${courier}</p>
+                    <p><strong>Tracking ID:</strong> <span style="color: #8e44ad; font-weight: bold; letter-spacing: 1px;">${trackingId}</span></p>
+                </div>
+                <p>Thank you for choosing Momento to capture your special day!</p>
+            </div>`;
+            
+        await sendMomentoEmail(customerEmail, customerName, `Your Deliverables Dispatched! (${ticketId})`, html);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to complete booking' });
     }
 });
 
