@@ -83,6 +83,8 @@ async function initializeDB() {
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS dp_url TEXT;
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS banner_url TEXT;
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS pro_type VARCHAR(50);
+            ALTER TABLE photographers ADD COLUMN IF NOT EXISTS bank_account VARCHAR(100);
+            ALTER TABLE photographers ADD COLUMN IF NOT EXISTS ifsc_code VARCHAR(50);
             
             -- NEW: VERIFICATION TRACKING COLUMNS
             ALTER TABLE photographers ADD COLUMN IF NOT EXISTS account_status VARCHAR(20) DEFAULT 'pending';
@@ -381,7 +383,7 @@ app.post('/api/bookings', async (req, res) => {
 // 7. SAVE PHOTOGRAPHER PROFILE
 // ==========================================
 app.post('/api/pro/profile', async (req, res) => {
-    const { proId, bio, dp_url, banner_url, specialties, pricing, best_shots, gallery } = req.body;
+    const { proId, bio, dp_url, banner_url, specialties, pricing, best_shots, gallery, bank_account, ifsc_code } = req.body;
     try {
         await pool.query(
             `UPDATE photographers 
@@ -391,9 +393,11 @@ app.post('/api/pro/profile', async (req, res) => {
                  specialties = $4::jsonb, 
                  pricing = $5::jsonb, 
                  best_shots = $6::jsonb, 
-                 gallery = $7::jsonb
-             WHERE id = $8`,
-            [bio, dp_url, banner_url, JSON.stringify(specialties), JSON.stringify(pricing), JSON.stringify(best_shots), JSON.stringify(gallery), proId]
+                 gallery = $7::jsonb,
+                 bank_account = $8,
+                 ifsc_code = $9
+             WHERE id = $10`,
+            [bio, dp_url, banner_url, JSON.stringify(specialties), JSON.stringify(pricing), JSON.stringify(best_shots), JSON.stringify(gallery), bank_account, ifsc_code, proId]
         );
         res.json({ success: true, message: 'Profile updated successfully' });
     } catch (error) {
@@ -421,8 +425,7 @@ app.get('/api/photographers', async (req, res) => {
 // ==========================================
 app.get('/api/pro/profile/:id', async (req, res) => {
     try {
-        // FIXED: Added is_verified and account_status to the SELECT query
-        const result = await pool.query('SELECT id, name, email, phone, bio, dp_url, banner_url, specialties, best_shots, gallery, pricing, pro_type as "proType", is_verified, account_status FROM photographers WHERE id = $1', [req.params.id]);
+        const result = await pool.query('SELECT id, name, email, phone, bio, dp_url, banner_url, specialties, best_shots, gallery, pricing, pro_type as "proType", is_verified, account_status, bank_account, ifsc_code FROM photographers WHERE id = $1', [req.params.id]);
         if (result.rows.length === 0) return res.status(404).json({ error: 'Profile not found' });
         res.json({ success: true, data: result.rows[0] });
     } catch (error) {
