@@ -316,10 +316,10 @@ app.post('/api/bookings', async (req, res) => {
         // Pack all details into the legacy event_details column just in case, while also saving properly to the new columns
         const fullDetails = `Requested: ${photographerName} (${artistType}) | Landmark: ${landmark} | ${details}`;
 
-        // Insert including the new Map and Artist Type columns
+        // Insert including the new Map and Artist Type columns, PLUS explicit 'pending' status
         await pool.query(
-            `INSERT INTO bookings (ticket_id, customer_id, photographer_id, artist_type, category, start_date, end_date, latitude, longitude, landmark, event_details) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            `INSERT INTO bookings (ticket_id, customer_id, photographer_id, artist_type, category, start_date, end_date, latitude, longitude, landmark, event_details, status) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending')`,
             [ticketId, customerId, proId, artistType, category, startDate, endDate, latitude, longitude, landmark, fullDetails]
         );
 
@@ -613,14 +613,16 @@ app.post('/api/crm/reject-artist', async (req, res) => {
 // ==========================================
 app.get('/api/crm/bookings', async (req, res) => {
     try {
-        // Fetch bookings and join with customer and photographer names
+        // FIXED: Using LEFT JOIN so bookings never vanish if a user deletes their account
         const query = `
             SELECT b.*, 
-                   c.name as customer_name, c.email as customer_email, c.phone as customer_phone,
-                   p.name as pro_name, p.pro_type
+                   COALESCE(c.name, 'Deleted Customer') as customer_name, 
+                   c.email as customer_email, c.phone as customer_phone,
+                   COALESCE(p.name, 'Deleted Artist') as pro_name, 
+                   p.pro_type
             FROM bookings b
-            JOIN customers c ON b.customer_id = c.id
-            JOIN photographers p ON b.photographer_id = p.id
+            LEFT JOIN customers c ON b.customer_id = c.id
+            LEFT JOIN photographers p ON b.photographer_id = p.id
             ORDER BY b.id DESC
         `;
         const result = await pool.query(query);
