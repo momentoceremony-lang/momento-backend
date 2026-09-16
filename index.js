@@ -789,6 +789,7 @@ app.get('/api/pro/bookings/:proId', async (req, res) => {
         const query = `
             SELECT b.ticket_id, b.status, b.category, 
                    b.start_date, b.end_date, b.landmark, b.event_details,
+                   b.latitude, b.longitude, -- NEW: Added GPS coordinates
                    COALESCE(c.name, 'Customer') as customer_name,
                    c.phone as customer_phone
             FROM bookings b
