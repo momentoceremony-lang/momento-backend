@@ -103,6 +103,17 @@ async function initializeDB() {
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS tracking_id TEXT;
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS courier_partner TEXT;
 
+            -- NEW: TIMELINE TRACKING COLUMNS
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS quoted_at TIMESTAMP;
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMP;
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP;
+            
+            -- NEW: RAZORPAY PREP COLUMNS
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS razorpay_order_id TEXT;
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS razorpay_payment_id TEXT;
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS final_balance_paid BOOLEAN DEFAULT FALSE;
+
             -- NEW: Fix old test bookings that have a blank status
             UPDATE bookings SET status = 'pending' WHERE status IS NULL;
             
@@ -644,12 +655,12 @@ app.post('/api/crm/send-quotation', async (req, res) => {
         // 2. Update the booking (Swap artist ID if found)
         if (targetProId) {
             await pool.query(
-                "UPDATE bookings SET status = 'quotation_sent', quotation_amount = $1, discount = $2, advance_amount = $3, photographer_id = $4 WHERE ticket_id = $5",
+                "UPDATE bookings SET status = 'quotation_sent', quotation_amount = $1, discount = $2, advance_amount = $3, photographer_id = $4, quoted_at = CURRENT_TIMESTAMP WHERE ticket_id = $5",
                 [amount, discount, advanceAmount, targetProId, ticketId]
             );
         } else {
             await pool.query(
-                "UPDATE bookings SET status = 'quotation_sent', quotation_amount = $1, discount = $2, advance_amount = $3 WHERE ticket_id = $4",
+                "UPDATE bookings SET status = 'quotation_sent', quotation_amount = $1, discount = $2, advance_amount = $3, quoted_at = CURRENT_TIMESTAMP WHERE ticket_id = $4",
                 [amount, discount, advanceAmount, ticketId]
             );
         }
@@ -684,7 +695,7 @@ app.post('/api/crm/send-quotation', async (req, res) => {
 app.post('/api/crm/confirm-booking', async (req, res) => {
     const { ticketId } = req.body;
     try {
-        await pool.query("UPDATE bookings SET status = 'confirmed' WHERE ticket_id = $1", [ticketId]);
+        await pool.query("UPDATE bookings SET status = 'confirmed', confirmed_at = CURRENT_TIMESTAMP WHERE ticket_id = $1", [ticketId]);
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: 'Failed to confirm booking' });
@@ -696,10 +707,10 @@ app.post('/api/crm/complete-booking', async (req, res) => {
     const { ticketId, trackingId, courier, customerEmail, customerName } = req.body;
     try {
         await pool.query(
-            "UPDATE bookings SET status = 'completed', tracking_id = $1, courier_partner = $2 WHERE ticket_id = $3",
+            "UPDATE bookings SET status = 'completed', tracking_id = $1, courier_partner = $2, completed_at = CURRENT_TIMESTAMP WHERE ticket_id = $3",
             [trackingId, courier, ticketId]
         );
-
+        
         const html = `
             <div style="font-family: Arial, sans-serif; color: #3C3633; max-width: 500px; margin: auto; border: 1px solid #eaddd7; border-radius: 10px; padding: 30px; background-color: #fcf9f6;">
                 <h2 style="color: #8e44ad; border-bottom: 2px solid #8e44ad; padding-bottom: 10px;">Your Memories Are on the Way!</h2>
