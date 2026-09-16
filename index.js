@@ -757,29 +757,27 @@ app.post('/api/crm/system/maintenance', async (req, res) => {
 
 
 // ==========================================
-// PUBLIC TICKET TRACKING
+// 12. CUSTOMER DASHBOARD (FETCH OWN BOOKINGS)
 // ==========================================
-app.get('/api/track/:ticketId', async (req, res) => {
+app.get('/api/customer/bookings/:customerId', async (req, res) => {
     try {
         const query = `
             SELECT b.ticket_id, b.status, b.artist_type, b.category, 
+                   b.start_date, b.end_date, b.quotation_amount, b.advance_amount,
                    b.created_at, b.quoted_at, b.confirmed_at, b.completed_at,
                    b.courier_partner, b.tracking_id,
-                   COALESCE(p.name, 'Assigned Artist') as pro_name
+                   COALESCE(p.name, 'Assigned Artist') as pro_name,
+                   p.dp_url
             FROM bookings b
             LEFT JOIN photographers p ON b.photographer_id = p.id
-            WHERE b.ticket_id = $1
+            WHERE b.customer_id = $1
+            ORDER BY b.id DESC
         `;
-        const result = await pool.query(query, [req.params.ticketId]);
-        
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Ticket not found. Please check your Ticket ID.' });
-        }
-        
-        res.json({ success: true, data: result.rows[0] });
+        const result = await pool.query(query, [req.params.customerId]);
+        res.json({ success: true, data: result.rows });
     } catch (error) {
-        console.error("Tracking Error:", error);
-        res.status(500).json({ error: 'Failed to fetch tracking data.' });
+        console.error("Customer Dashboard Error:", error);
+        res.status(500).json({ error: 'Failed to fetch your bookings.' });
     }
 });
 
