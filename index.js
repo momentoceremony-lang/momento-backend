@@ -781,6 +781,30 @@ app.get('/api/customer/bookings/:customerId', async (req, res) => {
     }
 });
 
+// ==========================================
+// 13. PRO DASHBOARD (FETCH OWN CONFIRMED BOOKINGS)
+// ==========================================
+app.get('/api/pro/bookings/:proId', async (req, res) => {
+    try {
+        const query = `
+            SELECT b.ticket_id, b.status, b.category, 
+                   b.start_date, b.end_date, b.landmark, b.event_details,
+                   COALESCE(c.name, 'Customer') as customer_name,
+                   c.phone as customer_phone
+            FROM bookings b
+            LEFT JOIN customers c ON b.customer_id = c.id
+            WHERE b.photographer_id = $1 
+            AND b.status IN ('confirmed', 'completed')
+            ORDER BY b.start_date ASC
+        `;
+        const result = await pool.query(query, [req.params.proId]);
+        res.json({ success: true, data: result.rows });
+    } catch (error) {
+        console.error("Pro Dashboard Bookings Error:", error);
+        res.status(500).json({ error: 'Failed to fetch bookings.' });
+    }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Momento Server running and exposed on port ${PORT}`);
 });
