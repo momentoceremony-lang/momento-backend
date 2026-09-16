@@ -613,13 +613,13 @@ app.post('/api/crm/reject-artist', async (req, res) => {
 // ==========================================
 app.get('/api/crm/bookings', async (req, res) => {
     try {
-        // FIXED: Using LEFT JOIN so bookings never vanish if a user deletes their account
         const query = `
             SELECT b.*, 
                    COALESCE(c.name, 'Deleted Customer') as customer_name, 
                    c.email as customer_email, c.phone as customer_phone,
                    COALESCE(p.name, 'Deleted Artist') as pro_name, 
-                   p.pro_type
+                   p.pro_type,
+                   p.pricing -- NEW: Fetching the pricing JSON
             FROM bookings b
             LEFT JOIN customers c ON b.customer_id = c.id
             LEFT JOIN photographers p ON b.photographer_id = p.id
