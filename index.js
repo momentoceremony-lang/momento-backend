@@ -892,6 +892,32 @@ app.post('/api/webhooks/razorpay', async (req, res) => {
     }
 });
 
+// ==========================================
+// 15. FETCH UNAVAILABLE DATES FOR CALENDAR
+// ==========================================
+app.get('/api/pro/:name/blocked-dates', async (req, res) => {
+    try {
+        const proRes = await pool.query('SELECT id FROM photographers WHERE name = $1', [req.params.name]);
+        if (proRes.rows.length === 0) return res.status(404).json({ error: 'Artist not found' });
+        
+        const proId = proRes.rows[0].id;
+        
+        // Fetch only dates where the booking is confirmed or completed
+        const query = `
+            SELECT start_date, end_date 
+            FROM bookings 
+            WHERE photographer_id = $1 
+            AND status IN ('confirmed', 'completed')
+        `;
+        const result = await pool.query(query, [proId]);
+        
+        res.json({ success: true, data: result.rows });
+    } catch (error) {
+        console.error("Fetch Blocked Dates Error:", error);
+        res.status(500).json({ error: 'Failed to fetch blocked dates.' });
+    }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Momento Server running and exposed on port ${PORT}`);
 });
