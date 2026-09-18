@@ -3,6 +3,7 @@ const cors = require('cors');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const Razorpay = require('razorpay'); // NEW: Import Razorpay
 require('dotenv').config();
 
 const app = express();
@@ -14,6 +15,12 @@ app.use(express.json({ limit: '10mb' }));
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
+});
+
+// NEW: Initialize Razorpay Instance
+const razorpay = new Razorpay({
+    key_id: process.env.RAZORPAY_KEY_ID,
+    key_secret: process.env.RAZORPAY_KEY_SECRET
 });
 
 const otpStore = new Map();
@@ -647,25 +654,62 @@ app.get('/api/crm/bookings', async (req, res) => {
 app.post('/api/crm/send-quotation', async (req, res) => {
     const { ticketId, amount, discount, advanceAmount, customerEmail, customerName, proName } = req.body;
     try {
-        // 1. If the Admin changed the Artist Name, look up the new Artist's ID
+        let paymentLinkUrl = "";
+        let razorpayLinkId = null;
+
+        // 1. Generate Razorpay Payment Link if an advance is required
+        if (advanceAmount > 0) {
+            const advancePaise = Math.round(advanceAmount * 100); // Razorpay requires amounts in paise (multiply by 100)
+            
+            const paymentLinkRequest = {
+                amount: advancePaise,
+                currency: "INR",
+                accept_partial: false,
+                description: `Advance Payment to secure Momento Booking: ${ticketId}`,
+                customer: {
+                    name: customerName,
+                    email: customerEmail
+                },
+                notify: {
+                    sms: false,
+                    email: false // We handle the email beautifully via Brevo instead
+                },
+                reminder_enable: false,
+                notes: {
+                    ticket_id: ticketId
+                }
+            };
+            
+            const paymentLink = await razorpay.paymentLink.create(paymentLinkRequest);
+            paymentLinkUrl = paymentLink.short_url;
+            razorpayLinkId = paymentLink.id; // Store this so we can verify payments later
+        }
+
+        // 2. If the Admin changed the Artist Name, look up the new Artist's ID
         const proRes = await pool.query('SELECT id FROM photographers WHERE name = $1', [proName]);
         let targetProId = null;
         if (proRes.rows.length > 0) targetProId = proRes.rows[0].id;
 
-        // 2. Update the booking (Swap artist ID if found)
+        // 3. Update the booking and save the Razorpay Order ID
         if (targetProId) {
             await pool.query(
-                "UPDATE bookings SET status = 'quotation_sent', quotation_amount = $1, discount = $2, advance_amount = $3, photographer_id = $4, quoted_at = CURRENT_TIMESTAMP WHERE ticket_id = $5",
-                [amount, discount, advanceAmount, targetProId, ticketId]
+                "UPDATE bookings SET status = 'quotation_sent', quotation_amount = $1, discount = $2, advance_amount = $3, photographer_id = $4, quoted_at = CURRENT_TIMESTAMP, razorpay_order_id = $5 WHERE ticket_id = $6",
+                [amount, discount, advanceAmount, targetProId, razorpayLinkId, ticketId]
             );
         } else {
             await pool.query(
-                "UPDATE bookings SET status = 'quotation_sent', quotation_amount = $1, discount = $2, advance_amount = $3, quoted_at = CURRENT_TIMESTAMP WHERE ticket_id = $4",
-                [amount, discount, advanceAmount, ticketId]
+                "UPDATE bookings SET status = 'quotation_sent', quotation_amount = $1, discount = $2, advance_amount = $3, quoted_at = CURRENT_TIMESTAMP, razorpay_order_id = $4 WHERE ticket_id = $5",
+                [amount, discount, advanceAmount, razorpayLinkId, ticketId]
             );
         }
 
-        // 3. Send the Milestone Email
+        // 4. Send the Milestone Email via Brevo with the embedded Payment Button
+        const paymentButtonHTML = paymentLinkUrl 
+            ? `<div style="text-align: center; margin-top: 25px;">
+                 <a href="${paymentLinkUrl}" style="background-color: #d19a8a; color: #0f0f10; padding: 14px 28px; text-decoration: none; border-radius: 25px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 4px 15px rgba(209, 154, 138, 0.4);">Pay Advance Securely</a>
+               </div>`
+            : '';
+
         const html = `
             <div style="font-family: Arial, sans-serif; color: #3C3633; max-width: 500px; margin: auto; border: 1px solid #eaddd7; border-radius: 10px; padding: 30px; background-color: #fcf9f6;">
                 <h2 style="color: #d19a8a; border-bottom: 2px solid #d19a8a; padding-bottom: 10px;">Your Custom Quotation</h2>
@@ -679,7 +723,10 @@ app.post('/api/crm/send-quotation', async (req, res) => {
                     ${discount > 0 ? `<p style="color: #27ae60; font-size: 13px; font-weight: bold; margin-top: 5px;">Includes a ₹${discount} discount!</p>` : ''}
                 </div>
                 
-                <p>To lock in your dates, our team will contact you shortly to process the advance payment securely.</p>
+                <p>To lock in your dates, please process the advance payment securely using the link below.</p>
+                
+                ${paymentButtonHTML}
+
                 <p style="font-size: 14px; opacity: 0.8; margin-top: 30px;">Every Moment. Forever.<br>- The Momento Team</p>
             </div>`;
             
@@ -687,7 +734,7 @@ app.post('/api/crm/send-quotation', async (req, res) => {
         res.json({ success: true });
     } catch (err) {
         console.error("Send Quotation Error:", err);
-        res.status(500).json({ error: 'Failed to send quotation' });
+        res.status(500).json({ error: 'Failed to send quotation and generate payment link' });
     }
 });
 
