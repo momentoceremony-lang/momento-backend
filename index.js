@@ -4,6 +4,7 @@ const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const Razorpay = require('razorpay'); // NEW: Import Razorpay
+const crypto = require('crypto');
 require('dotenv').config();
 
 const app = express();
@@ -850,6 +851,44 @@ app.get('/api/pro/bookings/:proId', async (req, res) => {
     } catch (error) {
         console.error("Pro Dashboard Bookings Error:", error);
         res.status(500).json({ error: 'Failed to fetch bookings.' });
+    }
+});
+
+// ==========================================
+// 14. RAZORPAY WEBHOOK (AUTOMATIC PAYMENT CONFIRMATION)
+// ==========================================
+app.post('/api/webhooks/razorpay', async (req, res) => {
+    // 1. Verify the request actually came from Razorpay
+    const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
+    const shasum = crypto.createHmac('sha256', secret);
+    shasum.update(JSON.stringify(req.body));
+    const digest = shasum.digest('hex');
+
+    if (digest !== req.headers['x-razorpay-signature']) {
+        return res.status(400).json({ error: 'Invalid signature' });
+    }
+
+    try {
+        const event = req.body.event;
+
+        // 2. Listen specifically for successful payment links
+        if (event === 'payment_link.paid') {
+            const paymentLink = req.body.payload.payment_link.entity;
+            const ticketId = paymentLink.notes.ticket_id; 
+
+            // 3. Automatically mark the booking as confirmed!
+            await pool.query(
+                "UPDATE bookings SET status = 'confirmed', confirmed_at = CURRENT_TIMESTAMP WHERE ticket_id = $1",
+                [ticketId]
+            );
+            
+            console.log(`✅ Webhook Success: Ticket ${ticketId} advance paid and confirmed.`);
+        }
+
+        res.status(200).json({ status: 'ok' });
+    } catch (error) {
+        console.error("Webhook Error:", error);
+        res.status(500).json({ error: 'Webhook processing failed' });
     }
 });
 
