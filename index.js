@@ -133,6 +133,11 @@ async function initializeDB() {
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS razorpay_payment_id TEXT;
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS final_balance_paid BOOLEAN DEFAULT FALSE;
 
+            -- NEW: FEEDBACK & RATING COLUMNS
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS rating INT DEFAULT 0;
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS review_text TEXT;
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS feedback_submitted BOOLEAN DEFAULT FALSE;
+
             -- NEW: Fix old test bookings that have a blank status
             UPDATE bookings SET status = 'pending' WHERE status IS NULL;
             
@@ -827,6 +832,7 @@ app.get('/api/customer/bookings/:customerId', async (req, res) => {
                    b.created_at, b.quoted_at, b.confirmed_at, b.artist_arrived_at, 
                    b.artist_left_at, b.final_payment_at, b.completed_at,
                    b.arrival_lat, b.arrival_lng, b.left_photo_url, b.left_lat, b.left_lng,
+                   b.rating, b.review_text, b.feedback_submitted, -- NEW: Added feedback columns
                    b.courier_partner, b.tracking_id,
                    COALESCE(p.name, 'Assigned Artist') as pro_name,
                    p.dp_url
@@ -1036,6 +1042,43 @@ app.post('/api/crm/send-final-payment', async (req, res) => {
     } catch (err) {
         console.error("Final Payment Error:", err);
         res.status(500).json({ error: 'Failed to send payment link' });
+    }
+});
+
+// ==========================================
+// 18. CUSTOMER FEEDBACK ENGINE
+// ==========================================
+app.post('/api/customer/feedback', async (req, res) => {
+    const { ticketId, rating, reviewText } = req.body;
+    try {
+        const updateRes = await pool.query(
+            "UPDATE bookings SET rating = $1, review_text = $2, feedback_submitted = true WHERE ticket_id = $3 RETURNING photographer_id, category, (SELECT name FROM photographers WHERE id = bookings.photographer_id) as pro_name, (SELECT email FROM photographers WHERE id = bookings.photographer_id) as pro_email",
+            [rating, reviewText, ticketId]
+        );
+
+        if (updateRes.rows.length > 0) {
+            const data = updateRes.rows[0];
+            
+            // Send Automated Email to the Artist
+            const html = `
+                <div style="font-family: Arial, sans-serif; color: #3C3633; max-width: 500px; margin: auto; border: 1px solid #eaddd7; border-radius: 10px; padding: 30px; background-color: #fcf9f6;">
+                    <h2 style="color: #d4af37; border-bottom: 2px solid #d4af37; padding-bottom: 10px;">New Client Review! ⭐</h2>
+                    <p>Hello <strong>${data.pro_name}</strong>,</p>
+                    <p>A client has just left feedback for your recent <strong>${data.category}</strong> event (Ticket: ${ticketId}).</p>
+                    <div style="background-color: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 4px 10px rgba(0,0,0,0.05); text-align: center;">
+                        <h1 style="color: #f39c12; margin: 0; font-size: 3.5rem;">${rating} <span style="font-size: 2rem; color: #ccc;">/ 5</span></h1>
+                        <p style="font-style: italic; color: #7f8c8d; margin-top: 15px; line-height: 1.6;">"${reviewText}"</p>
+                    </div>
+                    <p>Keep up the great work! This rating will be added to your public portfolio metrics.</p>
+                    <p style="font-size: 14px; opacity: 0.8;">- The Momento Team</p>
+                </div>`;
+            
+            await sendMomentoEmail(data.pro_email, data.pro_name, `You received a ${rating}-Star Review!`, html);
+        }
+        res.json({ success: true });
+    } catch (err) {
+        console.error("Feedback Error:", err);
+        res.status(500).json({ error: 'Failed to submit feedback' });
     }
 });
 
