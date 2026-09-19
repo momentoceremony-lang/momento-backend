@@ -920,6 +920,33 @@ app.get('/api/pro/:name/blocked-dates', async (req, res) => {
     }
 });
 
+// ==========================================
+// 16. PUBLIC TICKET TRACKING
+// ==========================================
+app.get('/api/track/:ticketId', async (req, res) => {
+    try {
+        const query = `
+            SELECT b.ticket_id, b.status, b.artist_type, b.category, 
+                   b.created_at, b.quoted_at, b.confirmed_at, b.artist_arrived_at, b.final_payment_at, b.completed_at,
+                   b.courier_partner, b.tracking_id,
+                   COALESCE(p.name, 'Assigned Artist') as pro_name
+            FROM bookings b
+            LEFT JOIN photographers p ON b.photographer_id = p.id
+            WHERE b.ticket_id = $1
+        `;
+        const result = await pool.query(query, [req.params.ticketId]);
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Ticket not found. Please check your Ticket ID.' });
+        }
+        
+        res.json({ success: true, data: result.rows[0] });
+    } catch (error) {
+        console.error("Tracking Error:", error);
+        res.status(500).json({ error: 'Failed to fetch tracking data.' });
+    }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Momento Server running and exposed on port ${PORT}`);
 });
