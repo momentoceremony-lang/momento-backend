@@ -845,7 +845,7 @@ app.get('/api/pro/bookings/:proId', async (req, res) => {
             FROM bookings b
             LEFT JOIN customers c ON b.customer_id = c.id
             WHERE b.photographer_id = $1 
-            AND b.status IN ('confirmed', 'completed')
+            AND b.status IN ('confirmed', 'artist_arrived', 'final_paid', 'completed')
             ORDER BY b.start_date ASC
         `;
         const result = await pool.query(query, [req.params.proId]);
