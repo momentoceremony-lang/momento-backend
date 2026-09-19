@@ -112,6 +112,14 @@ async function initializeDB() {
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS courier_partner TEXT;
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS arrival_photo_url TEXT;
 
+            -- NEW: ADVANCED GPS & EXIT TRACKING COLUMNS
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS arrival_lat DECIMAL(10, 8);
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS arrival_lng DECIMAL(11, 8);
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS artist_left_at TIMESTAMP;
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS left_photo_url TEXT;
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS left_lat DECIMAL(10, 8);
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS left_lng DECIMAL(11, 8);
+
             -- NEW: TIMELINE TRACKING COLUMNS
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS quoted_at TIMESTAMP;
@@ -815,7 +823,9 @@ app.get('/api/customer/bookings/:customerId', async (req, res) => {
         const query = `
             SELECT b.ticket_id, b.status, b.artist_type, b.category, 
                    b.start_date, b.end_date, b.quotation_amount, b.advance_amount,
-                   b.created_at, b.quoted_at, b.confirmed_at, b.artist_arrived_at, b.final_payment_at, b.completed_at,
+                   b.created_at, b.quoted_at, b.confirmed_at, b.artist_arrived_at, 
+                   b.artist_left_at, b.final_payment_at, b.completed_at,
+                   b.arrival_lat, b.arrival_lng, b.left_photo_url, b.left_lat, b.left_lng,
                    b.courier_partner, b.tracking_id,
                    COALESCE(p.name, 'Assigned Artist') as pro_name,
                    p.dp_url
@@ -840,13 +850,14 @@ app.get('/api/pro/bookings/:proId', async (req, res) => {
         const query = `
             SELECT b.ticket_id, b.status, b.category, 
                    b.start_date, b.end_date, b.landmark, b.event_details,
-                   b.latitude, b.longitude, -- NEW: Added GPS coordinates
+                   b.latitude, b.longitude, 
+                   b.arrival_lat, b.arrival_lng, b.artist_left_at, b.left_photo_url, b.left_lat, b.left_lng,
                    COALESCE(c.name, 'Customer') as customer_name,
                    c.phone as customer_phone
             FROM bookings b
             LEFT JOIN customers c ON b.customer_id = c.id
             WHERE b.photographer_id = $1 
-            AND b.status IN ('confirmed', 'artist_arrived', 'final_paid', 'completed')
+            AND b.status IN ('confirmed', 'artist_arrived', 'artist_left', 'final_paid', 'completed')
             ORDER BY b.start_date ASC
         `;
         const result = await pool.query(query, [req.params.proId]);
@@ -928,7 +939,9 @@ app.get('/api/track/:ticketId', async (req, res) => {
     try {
         const query = `
             SELECT b.ticket_id, b.status, b.artist_type, b.category, 
-                   b.created_at, b.quoted_at, b.confirmed_at, b.artist_arrived_at, b.final_payment_at, b.completed_at,
+                   b.created_at, b.quoted_at, b.confirmed_at, b.artist_arrived_at, 
+                   b.artist_left_at, b.final_payment_at, b.completed_at,
+                   b.arrival_lat, b.arrival_lng, b.left_photo_url, b.left_lat, b.left_lng,
                    b.courier_partner, b.tracking_id,
                    COALESCE(p.name, 'Assigned Artist') as pro_name
             FROM bookings b
@@ -949,22 +962,33 @@ app.get('/api/track/:ticketId', async (req, res) => {
 });
 
 // ==========================================
-// 17. ARTIST APP TRIGGERS (MARK ARRIVAL)
-// ==========================================
-// ==========================================
-// 17. ARTIST APP TRIGGERS (MARK ARRIVAL WITH PHOTO)
+// 17. ARTIST APP TRIGGERS (MARK ARRIVAL & EXIT WITH GPS)
 // ==========================================
 app.post('/api/pro/mark-arrived', async (req, res) => {
-    const { ticketId, photoUrl } = req.body;
+    const { ticketId, photoUrl, lat, lng } = req.body;
     try {
         await pool.query(
-            "UPDATE bookings SET status = 'artist_arrived', artist_arrived_at = CURRENT_TIMESTAMP, arrival_photo_url = $1 WHERE ticket_id = $2", 
-            [photoUrl, ticketId]
+            "UPDATE bookings SET status = 'artist_arrived', artist_arrived_at = CURRENT_TIMESTAMP, arrival_photo_url = $1, arrival_lat = $2, arrival_lng = $3 WHERE ticket_id = $4", 
+            [photoUrl, lat, lng, ticketId]
         );
         res.json({ success: true });
     } catch (err) {
         console.error("Mark Arrived Error:", err);
         res.status(500).json({ error: 'Failed to mark arrival' });
+    }
+});
+
+app.post('/api/pro/mark-left', async (req, res) => {
+    const { ticketId, photoUrl, lat, lng } = req.body;
+    try {
+        await pool.query(
+            "UPDATE bookings SET status = 'artist_left', artist_left_at = CURRENT_TIMESTAMP, left_photo_url = $1, left_lat = $2, left_lng = $3 WHERE ticket_id = $4", 
+            [photoUrl, lat, lng, ticketId]
+        );
+        res.json({ success: true });
+    } catch (err) {
+        console.error("Mark Left Error:", err);
+        res.status(500).json({ error: 'Failed to mark exit' });
     }
 });
 
