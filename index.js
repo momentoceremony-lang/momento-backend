@@ -1051,29 +1051,37 @@ app.post('/api/crm/send-final-payment', async (req, res) => {
 app.post('/api/customer/feedback', async (req, res) => {
     const { ticketId, rating, reviewText } = req.body;
     try {
+        // 1. Save the feedback safely
         const updateRes = await pool.query(
-            "UPDATE bookings SET rating = $1, review_text = $2, feedback_submitted = true WHERE ticket_id = $3 RETURNING photographer_id, category, (SELECT name FROM photographers WHERE id = bookings.photographer_id) as pro_name, (SELECT email FROM photographers WHERE id = bookings.photographer_id) as pro_email",
+            "UPDATE bookings SET rating = $1, review_text = $2, feedback_submitted = true WHERE ticket_id = $3 RETURNING photographer_id, category",
             [rating, reviewText, ticketId]
         );
 
         if (updateRes.rows.length > 0) {
-            const data = updateRes.rows[0];
+            const booking = updateRes.rows[0];
             
-            // Send Automated Email to the Artist
-            const html = `
-                <div style="font-family: Arial, sans-serif; color: #3C3633; max-width: 500px; margin: auto; border: 1px solid #eaddd7; border-radius: 10px; padding: 30px; background-color: #fcf9f6;">
-                    <h2 style="color: #d4af37; border-bottom: 2px solid #d4af37; padding-bottom: 10px;">New Client Review! ⭐</h2>
-                    <p>Hello <strong>${data.pro_name}</strong>,</p>
-                    <p>A client has just left feedback for your recent <strong>${data.category}</strong> event (Ticket: ${ticketId}).</p>
-                    <div style="background-color: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 4px 10px rgba(0,0,0,0.05); text-align: center;">
-                        <h1 style="color: #f39c12; margin: 0; font-size: 3.5rem;">${rating} <span style="font-size: 2rem; color: #ccc;">/ 5</span></h1>
-                        <p style="font-style: italic; color: #7f8c8d; margin-top: 15px; line-height: 1.6;">"${reviewText}"</p>
-                    </div>
-                    <p>Keep up the great work! This rating will be added to your public portfolio metrics.</p>
-                    <p style="font-size: 14px; opacity: 0.8;">- The Momento Team</p>
-                </div>`;
+            // 2. Fetch the Artist's Email using their ID
+            const proRes = await pool.query("SELECT name, email FROM photographers WHERE id = $1", [booking.photographer_id]);
             
-            await sendMomentoEmail(data.pro_email, data.pro_name, `You received a ${rating}-Star Review!`, html);
+            if (proRes.rows.length > 0) {
+                const pro = proRes.rows[0];
+                
+                // 3. Send Automated Email to the Artist
+                const html = `
+                    <div style="font-family: Arial, sans-serif; color: #3C3633; max-width: 500px; margin: auto; border: 1px solid #eaddd7; border-radius: 10px; padding: 30px; background-color: #fcf9f6;">
+                        <h2 style="color: #d4af37; border-bottom: 2px solid #d4af37; padding-bottom: 10px;">New Client Review! ⭐</h2>
+                        <p>Hello <strong>${pro.name}</strong>,</p>
+                        <p>A client has just left feedback for your recent <strong>${booking.category}</strong> event (Ticket: ${ticketId}).</p>
+                        <div style="background-color: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 4px 10px rgba(0,0,0,0.05); text-align: center;">
+                            <h1 style="color: #f39c12; margin: 0; font-size: 3.5rem;">${rating} <span style="font-size: 2rem; color: #ccc;">/ 5</span></h1>
+                            <p style="font-style: italic; color: #7f8c8d; margin-top: 15px; line-height: 1.6;">"${reviewText}"</p>
+                        </div>
+                        <p>Keep up the great work! This rating will be added to your public portfolio metrics.</p>
+                        <p style="font-size: 14px; opacity: 0.8;">- The Momento Team</p>
+                    </div>`;
+                
+                await sendMomentoEmail(pro.email, pro.name, `You received a ${rating}-Star Review!`, html).catch(err => console.error("Feedback Email Error:", err));
+            }
         }
         res.json({ success: true });
     } catch (err) {
