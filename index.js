@@ -1046,28 +1046,32 @@ app.post('/api/crm/send-final-payment', async (req, res) => {
 });
 
 // ==========================================
-// 18. CUSTOMER FEEDBACK ENGINE
+// 18. CUSTOMER FEEDBACK ENGINE (DUAL EMAIL)
 // ==========================================
 app.post('/api/customer/feedback', async (req, res) => {
     const { ticketId, rating, reviewText } = req.body;
     try {
-        // 1. Save the feedback safely
+        // 1. Save the feedback and return BOTH photographer_id and customer_id
         const updateRes = await pool.query(
-            "UPDATE bookings SET rating = $1, review_text = $2, feedback_submitted = true WHERE ticket_id = $3 RETURNING photographer_id, category",
+            "UPDATE bookings SET rating = $1, review_text = $2, feedback_submitted = true WHERE ticket_id = $3 RETURNING photographer_id, customer_id, category",
             [rating, reviewText, ticketId]
         );
 
         if (updateRes.rows.length > 0) {
             const booking = updateRes.rows[0];
             
-            // 2. Fetch the Artist's Email using their ID
+            // 2. Fetch the Artist's Details
             const proRes = await pool.query("SELECT name, email FROM photographers WHERE id = $1", [booking.photographer_id]);
             
-            if (proRes.rows.length > 0) {
+            // 3. Fetch the Customer's Details
+            const custRes = await pool.query("SELECT name, email FROM customers WHERE id = $1", [booking.customer_id]);
+            
+            if (proRes.rows.length > 0 && custRes.rows.length > 0) {
                 const pro = proRes.rows[0];
+                const cust = custRes.rows[0];
                 
-                // 3. Send Automated Email to the Artist
-                const html = `
+                // --- EMAIL 1: TO THE ARTIST ---
+                const artistHtml = `
                     <div style="font-family: Arial, sans-serif; color: #3C3633; max-width: 500px; margin: auto; border: 1px solid #eaddd7; border-radius: 10px; padding: 30px; background-color: #fcf9f6;">
                         <h2 style="color: #d4af37; border-bottom: 2px solid #d4af37; padding-bottom: 10px;">New Client Review! ⭐</h2>
                         <p>Hello <strong>${pro.name}</strong>,</p>
@@ -1080,7 +1084,23 @@ app.post('/api/customer/feedback', async (req, res) => {
                         <p style="font-size: 14px; opacity: 0.8;">- The Momento Team</p>
                     </div>`;
                 
-                await sendMomentoEmail(pro.email, pro.name, `You received a ${rating}-Star Review!`, html).catch(err => console.error("Feedback Email Error:", err));
+                // --- EMAIL 2: TO THE CUSTOMER ---
+                const custHtml = `
+                    <div style="font-family: Arial, sans-serif; color: #3C3633; max-width: 500px; margin: auto; border: 1px solid #eaddd7; border-radius: 10px; padding: 30px; background-color: #fcf9f6;">
+                        <h2 style="color: #27ae60; border-bottom: 2px solid #27ae60; padding-bottom: 10px;">Thank You for Your Feedback!</h2>
+                        <p>Hello <strong>${cust.name}</strong>,</p>
+                        <p>Thank you for taking the time to review your recent experience with <strong>${pro.name}</strong>.</p>
+                        <div style="background-color: white; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #f39c12;">
+                            <p style="margin: 0; font-size: 1.2rem; color: #f39c12;">${'★'.repeat(rating)}${'☆'.repeat(5 - rating)}</p>
+                            <p style="font-style: italic; color: #555; margin-top: 10px;">"${reviewText}"</p>
+                        </div>
+                        <p>Your insights help us maintain the highest quality of service on Momento. We look forward to capturing your next special moment!</p>
+                        <p style="font-size: 14px; opacity: 0.8;">Every Moment. Forever.<br>- The Momento Team</p>
+                    </div>`;
+
+                // Dispatch both emails safely via Brevo
+                await sendEmailViaBrevo(pro.email, `You received a ${rating}-Star Review!`, artistHtml).catch(err => console.error("Artist Email Failed:", err));
+                await sendEmailViaBrevo(cust.email, `Thank you for your feedback!`, custHtml).catch(err => console.error("Customer Email Failed:", err));
             }
         }
         res.json({ success: true });
