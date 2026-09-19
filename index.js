@@ -116,6 +116,8 @@ async function initializeDB() {
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS quoted_at TIMESTAMP;
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMP;
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP;
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS artist_arrived_at TIMESTAMP;
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS final_payment_at TIMESTAMP;
             
             -- NEW: RAZORPAY PREP COLUMNS
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS razorpay_order_id TEXT;
@@ -812,7 +814,7 @@ app.get('/api/customer/bookings/:customerId', async (req, res) => {
         const query = `
             SELECT b.ticket_id, b.status, b.artist_type, b.category, 
                    b.start_date, b.end_date, b.quotation_amount, b.advance_amount,
-                   b.created_at, b.quoted_at, b.confirmed_at, b.completed_at,
+                   b.created_at, b.quoted_at, b.confirmed_at, b.artist_arrived_at, b.final_payment_at, b.completed_at,
                    b.courier_partner, b.tracking_id,
                    COALESCE(p.name, 'Assigned Artist') as pro_name,
                    p.dp_url
