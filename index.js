@@ -947,6 +947,23 @@ app.get('/api/track/:ticketId', async (req, res) => {
     }
 });
 
+// ==========================================
+// 17. ARTIST APP TRIGGERS (MARK ARRIVAL)
+// ==========================================
+app.post('/api/pro/mark-arrived', async (req, res) => {
+    const { ticketId } = req.body;
+    try {
+        await pool.query(
+            "UPDATE bookings SET status = 'artist_arrived', artist_arrived_at = CURRENT_TIMESTAMP WHERE ticket_id = $1", 
+            [ticketId]
+        );
+        res.json({ success: true });
+    } catch (err) {
+        console.error("Mark Arrived Error:", err);
+        res.status(500).json({ error: 'Failed to mark arrival' });
+    }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Momento Server running and exposed on port ${PORT}`);
 });
