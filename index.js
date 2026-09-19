@@ -905,6 +905,7 @@ app.post('/api/webhooks/razorpay', async (req, res) => {
                 );
                 console.log(`✅ Webhook Success: Ticket ${ticketId} advance paid.`);
             }
+        } // <-- This is the curly brace that was missing!
 
         res.status(200).json({ status: 'ok' });
     } catch (error) {
