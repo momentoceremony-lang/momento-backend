@@ -688,7 +688,8 @@ app.post('/api/crm/send-quotation', async (req, res) => {
                 },
                 reminder_enable: false,
                 notes: {
-                    ticket_id: ticketId
+                    ticket_id: ticketId,
+                    payment_type: 'advance'
                 }
             };
             
@@ -889,15 +890,21 @@ app.post('/api/webhooks/razorpay', async (req, res) => {
         if (event === 'payment_link.paid') {
             const paymentLink = req.body.payload.payment_link.entity;
             const ticketId = paymentLink.notes.ticket_id; 
+            const paymentType = paymentLink.notes.payment_type || 'advance';
 
-            // 3. Automatically mark the booking as confirmed!
-            await pool.query(
-                "UPDATE bookings SET status = 'confirmed', confirmed_at = CURRENT_TIMESTAMP WHERE ticket_id = $1",
-                [ticketId]
-            );
-            
-            console.log(`✅ Webhook Success: Ticket ${ticketId} advance paid and confirmed.`);
-        }
+            if (paymentType === 'final') {
+                await pool.query(
+                    "UPDATE bookings SET status = 'final_paid', final_payment_at = CURRENT_TIMESTAMP WHERE ticket_id = $1",
+                    [ticketId]
+                );
+                console.log(`✅ Webhook Success: Ticket ${ticketId} FINAL balance paid.`);
+            } else {
+                await pool.query(
+                    "UPDATE bookings SET status = 'confirmed', confirmed_at = CURRENT_TIMESTAMP WHERE ticket_id = $1",
+                    [ticketId]
+                );
+                console.log(`✅ Webhook Success: Ticket ${ticketId} advance paid.`);
+            }
 
         res.status(200).json({ status: 'ok' });
     } catch (error) {
@@ -989,6 +996,45 @@ app.post('/api/pro/mark-left', async (req, res) => {
     } catch (err) {
         console.error("Mark Left Error:", err);
         res.status(500).json({ error: 'Failed to mark exit' });
+    }
+});
+
+app.post('/api/crm/send-final-payment', async (req, res) => {
+    const { ticketId, balanceDue, customerEmail, customerName } = req.body;
+    try {
+        const amountPaise = Math.round(balanceDue * 100);
+        const paymentLinkRequest = {
+            amount: amountPaise,
+            currency: "INR",
+            accept_partial: false,
+            description: `Final Balance for Momento Booking: ${ticketId}`,
+            customer: { name: customerName, email: customerEmail },
+            notify: { sms: false, email: false },
+            notes: { ticket_id: ticketId, payment_type: 'final' }
+        };
+        
+        const paymentLink = await razorpay.paymentLink.create(paymentLinkRequest);
+        
+        const html = `
+            <div style="font-family: Arial, sans-serif; color: #3C3633; max-width: 500px; margin: auto; border: 1px solid #eaddd7; border-radius: 10px; padding: 30px; background-color: #fcf9f6;">
+                <h2 style="color: #27ae60; border-bottom: 2px solid #27ae60; padding-bottom: 10px;">Event Completed Successfully!</h2>
+                <p>Hello <strong>${customerName}</strong>,</p>
+                <p>We hope you had an amazing event! Your artist has successfully concluded the session for Ticket <strong>${ticketId}</strong>.</p>
+                <p>To begin processing your final deliverables, please clear the remaining balance using the secure link below.</p>
+                <div style="background-color: white; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
+                    <p style="margin: 0; font-size: 14px; opacity: 0.8;">Final Balance Due</p>
+                    <h1 style="color: #e74c3c; margin: 5px 0;">₹${balanceDue}</h1>
+                </div>
+                <div style="text-align: center; margin-top: 25px;">
+                 <a href="${paymentLink.short_url}" style="background-color: #d19a8a; color: #0f0f10; padding: 14px 28px; text-decoration: none; border-radius: 25px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 4px 15px rgba(209, 154, 138, 0.4);">Pay Final Balance</a>
+               </div>
+            </div>`;
+            
+        await sendMomentoEmail(customerEmail, customerName, `Final Payment Due: ${ticketId}`, html);
+        res.json({ success: true });
+    } catch (err) {
+        console.error("Final Payment Error:", err);
+        res.status(500).json({ error: 'Failed to send payment link' });
     }
 });
 
