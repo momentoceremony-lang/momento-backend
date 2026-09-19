@@ -110,6 +110,7 @@ async function initializeDB() {
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS paid_amount DECIMAL(10,2) DEFAULT 0;
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS tracking_id TEXT;
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS courier_partner TEXT;
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS arrival_photo_url TEXT;
 
             -- NEW: TIMELINE TRACKING COLUMNS
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
@@ -950,12 +951,15 @@ app.get('/api/track/:ticketId', async (req, res) => {
 // ==========================================
 // 17. ARTIST APP TRIGGERS (MARK ARRIVAL)
 // ==========================================
+// ==========================================
+// 17. ARTIST APP TRIGGERS (MARK ARRIVAL WITH PHOTO)
+// ==========================================
 app.post('/api/pro/mark-arrived', async (req, res) => {
-    const { ticketId } = req.body;
+    const { ticketId, photoUrl } = req.body;
     try {
         await pool.query(
-            "UPDATE bookings SET status = 'artist_arrived', artist_arrived_at = CURRENT_TIMESTAMP WHERE ticket_id = $1", 
-            [ticketId]
+            "UPDATE bookings SET status = 'artist_arrived', artist_arrived_at = CURRENT_TIMESTAMP, arrival_photo_url = $1 WHERE ticket_id = $2", 
+            [photoUrl, ticketId]
         );
         res.json({ success: true });
     } catch (err) {
