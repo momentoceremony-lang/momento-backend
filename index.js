@@ -1296,26 +1296,39 @@ app.post('/api/crm/gallery/reject', async (req, res) => {
 // ==========================================
 app.post('/api/crm/system/migrate-gallery', async (req, res) => {
     try {
-        // Fetch all photographers who have a gallery array
-        const pros = await pool.query("SELECT id, gallery FROM photographers WHERE gallery IS NOT NULL AND jsonb_array_length(gallery) > 0");
+        // 1. Force table creation just in case it failed previously
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS gallery_submissions (
+                id SERIAL PRIMARY KEY,
+                photographer_id INT REFERENCES photographers(id) ON DELETE SET NULL,
+                image_url TEXT NOT NULL,
+                category VARCHAR(100) NOT NULL,
+                is_approved BOOLEAN DEFAULT FALSE,
+                approved_by VARCHAR(50),
+                approved_at TIMESTAMP,
+                submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
 
+        // 2. Fetch all photographers with existing galleries
+        const pros = await pool.query("SELECT id, gallery FROM photographers WHERE gallery IS NOT NULL");
         let migratedCount = 0;
 
         for (let pro of pros.rows) {
             const galleryArray = pro.gallery; 
+            if (!Array.isArray(galleryArray)) continue; // Skip if empty or corrupted
+
             for (let item of galleryArray) {
-                // Handle both old String arrays and new Object arrays safely
                 const imgUrl = typeof item === 'string' ? item : item.url;
                 const imgCat = typeof item === 'string' ? 'Uncategorized' : (item.category || 'Uncategorized');
 
-                // Ensure it is a valid Cloudinary link
-                if (imgUrl && imgUrl.includes('cloudinary.com')) {
-                    // Check if it already exists in the CRM so we don't duplicate
+                // 3. Ensure it is a valid web URL (Catches Cloudinary, Imgur, etc.)
+                if (imgUrl && imgUrl.startsWith('http')) {
                     const check = await pool.query("SELECT id FROM gallery_submissions WHERE image_url = $1", [imgUrl]);
                     if (check.rows.length === 0) {
                         await pool.query(
                             "INSERT INTO gallery_submissions (photographer_id, image_url, category, is_approved) VALUES ($1, $2, $3, false)",
-                            [pro.id, imgUrl, imgCat]
+                            [pro.id, imgUrl, imgCat.substring(0, 99)] // Safety truncate category
                         );
                         migratedCount++;
                     }
@@ -1325,7 +1338,7 @@ app.post('/api/crm/system/migrate-gallery', async (req, res) => {
         res.json({ success: true, count: migratedCount });
     } catch (err) {
         console.error("Migration Error:", err);
-        res.status(500).json({ error: 'Migration failed.' });
+        res.status(500).json({ error: 'Migration failed: ' + err.message });
     }
 });
 
