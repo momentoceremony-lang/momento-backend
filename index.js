@@ -147,14 +147,30 @@ async function initializeDB() {
             -- NEW: Fix old test bookings that have a blank status
             UPDATE bookings SET status = 'pending' WHERE status IS NULL;
             
-            -- NEW: CRM USERS TABLE
+            -- NEW: CRM USERS TABLE (Upgraded with Permissions)
             CREATE TABLE IF NOT EXISTS crm_users (
                 id SERIAL PRIMARY KEY,
                 username VARCHAR(50) UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
                 role VARCHAR(20) NOT NULL,
-                must_reset_password BOOLEAN DEFAULT TRUE
+                must_reset_password BOOLEAN DEFAULT TRUE,
+                full_name VARCHAR(100),
+                gender VARCHAR(20),
+                email VARCHAR(100),
+                p_verification BOOLEAN DEFAULT TRUE,
+                p_bookings BOOLEAN DEFAULT TRUE,
+                p_feedback BOOLEAN DEFAULT TRUE,
+                p_gallery BOOLEAN DEFAULT TRUE
             );
+
+            -- FORCE COLUMNS (in case the table already exists)
+            ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS full_name VARCHAR(100);
+            ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS gender VARCHAR(20);
+            ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS email VARCHAR(100);
+            ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS p_verification BOOLEAN DEFAULT TRUE;
+            ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS p_bookings BOOLEAN DEFAULT TRUE;
+            ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS p_feedback BOOLEAN DEFAULT TRUE;
+            ALTER TABLE crm_users ADD COLUMN IF NOT EXISTS p_gallery BOOLEAN DEFAULT TRUE;
 
             -- NEW: CRM VERIFIED GALLERY SUBMISSIONS
             CREATE TABLE IF NOT EXISTS gallery_submissions (
@@ -1344,6 +1360,79 @@ app.post('/api/crm/system/migrate-gallery', async (req, res) => {
     } catch (err) {
         console.error("Migration Error:", err);
         res.status(500).json({ error: 'Migration failed: ' + err.message });
+    }
+});
+
+// ==========================================
+// 21. CRM USER MANAGEMENT ENGINE
+// ==========================================
+
+// Fetch all staff users
+app.get('/api/crm/users', async (req, res) => {
+    try {
+        const result = await pool.query(
+            "SELECT id, username, role, full_name, gender, email, p_verification, p_bookings, p_feedback, p_gallery FROM crm_users ORDER BY id ASC"
+        );
+        res.json({ success: true, data: result.rows });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch users.' });
+    }
+});
+
+// Create a new user
+app.post('/api/crm/users/create', async (req, res) => {
+    const { username, fullName, gender, email, p_ver, p_book, p_feed, p_gal } = req.body;
+    try {
+        const check = await pool.query("SELECT id FROM crm_users WHERE username = $1", [username]);
+        if (check.rows.length > 0) return res.status(400).json({ error: "Username already exists." });
+
+        const hash = await bcrypt.hash("B00T.ME", 10);
+        await pool.query(
+            `INSERT INTO crm_users 
+            (username, password_hash, role, must_reset_password, full_name, gender, email, p_verification, p_bookings, p_feedback, p_gallery) 
+            VALUES ($1, $2, 'staff', true, $3, $4, $5, $6, $7, $8, $9)`,
+            [username, hash, fullName, gender, email, p_ver, p_book, p_feed, p_gal]
+        );
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to create user.' });
+    }
+});
+
+// Update an existing user
+app.put('/api/crm/users/update', async (req, res) => {
+    const { id, fullName, gender, email, p_ver, p_book, p_feed, p_gal } = req.body;
+    try {
+        await pool.query(
+            `UPDATE crm_users 
+             SET full_name = $1, gender = $2, email = $3, p_verification = $4, p_bookings = $5, p_feedback = $6, p_gallery = $7 
+             WHERE id = $8`,
+            [fullName, gender, email, p_ver, p_book, p_feed, p_gal, id]
+        );
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to update user.' });
+    }
+});
+
+// Reset password to B00T.ME
+app.post('/api/crm/users/reset-pass', async (req, res) => {
+    try {
+        const hash = await bcrypt.hash("B00T.ME", 10);
+        await pool.query("UPDATE crm_users SET password_hash = $1, must_reset_password = true WHERE id = $2", [hash, req.body.id]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to reset password.' });
+    }
+});
+
+// Delete user
+app.delete('/api/crm/users/delete/:id', async (req, res) => {
+    try {
+        await pool.query("DELETE FROM crm_users WHERE id = $1 AND role != 'developer'", [req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to delete user.' });
     }
 });
 
