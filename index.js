@@ -138,6 +138,12 @@ async function initializeDB() {
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS review_text TEXT;
             ALTER TABLE bookings ADD COLUMN IF NOT EXISTS feedback_submitted BOOLEAN DEFAULT FALSE;
 
+            -- NEW: CRM FEEDBACK MANAGEMENT COLUMNS
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS crm_reviewed_by VARCHAR(50);
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS crm_reviewed_at TIMESTAMP;
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS crm_warning_sent BOOLEAN DEFAULT FALSE;
+            ALTER TABLE bookings ADD COLUMN IF NOT EXISTS crm_warning_text TEXT;
+
             -- NEW: Fix old test bookings that have a blank status
             UPDATE bookings SET status = 'pending' WHERE status IS NULL;
             
@@ -1107,6 +1113,75 @@ app.post('/api/customer/feedback', async (req, res) => {
     } catch (err) {
         console.error("Feedback Error:", err);
         res.status(500).json({ error: 'Failed to submit feedback' });
+    }
+});
+
+// ==========================================
+// 19. CRM FEEDBACK MANAGEMENT
+// ==========================================
+app.get('/api/crm/feedback', async (req, res) => {
+    try {
+        const query = `
+            SELECT b.ticket_id, b.rating, b.review_text, b.feedback_submitted, 
+                   b.crm_reviewed_by, b.crm_reviewed_at, b.crm_warning_sent, b.crm_warning_text,
+                   c.name as customer_name, c.email as customer_email,
+                   p.name as pro_name, p.email as pro_email, p.dp_url
+            FROM bookings b
+            JOIN customers c ON b.customer_id = c.id
+            JOIN photographers p ON b.photographer_id = p.id
+            WHERE b.feedback_submitted = true
+            ORDER BY b.id DESC
+        `;
+        const result = await pool.query(query);
+        res.json({ success: true, data: result.rows });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch feedback' });
+    }
+});
+
+// Just mark it as reviewed (Good Review)
+app.post('/api/crm/feedback/review', async (req, res) => {
+    const { ticketId, adminName } = req.body;
+    try {
+        await pool.query(
+            "UPDATE bookings SET crm_reviewed_by = $1, crm_reviewed_at = CURRENT_TIMESTAMP WHERE ticket_id = $2",
+            [adminName, ticketId]
+        );
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to review feedback' });
+    }
+});
+
+// Send a warning email and mark it as reviewed (Bad Review)
+app.post('/api/crm/feedback/warning', async (req, res) => {
+    const { ticketId, adminName, warningText, proEmail, proName } = req.body;
+    try {
+        // 1. Save to DB
+        await pool.query(
+            "UPDATE bookings SET crm_reviewed_by = $1, crm_reviewed_at = CURRENT_TIMESTAMP, crm_warning_sent = true, crm_warning_text = $2 WHERE ticket_id = $3",
+            [adminName, warningText, ticketId]
+        );
+
+        // 2. Dispatch the Warning Email via Brevo
+        const html = `
+            <div style="font-family: Arial, sans-serif; color: #3C3633; max-width: 500px; margin: auto; border: 1px solid #eaddd7; border-radius: 10px; padding: 30px; background-color: #fcf9f6;">
+                <h2 style="color: #e74c3c; border-bottom: 2px solid #e74c3c; padding-bottom: 10px;">Action Required: Ticket ${ticketId}</h2>
+                <p>Hello <strong>${proName}</strong>,</p>
+                <p>Our Quality Assurance team has reviewed the recent feedback submitted by your client.</p>
+                <div style="background: #fdf0f0; border-left: 4px solid #e74c3c; padding: 15px; margin: 15px 0;">
+                    <strong>Message from Momento Management:</strong><br><br>
+                    <span style="font-style: italic; color: #c0392b;">${warningText.replace(/\n/g, '<br>')}</span>
+                </div>
+                <p>Momento relies on top-tier experiences. Please ensure you maintain the highest standards of service for all future bookings.</p>
+                <p style="font-size: 14px; opacity: 0.8; margin-top: 30px;">- The Momento Team</p>
+            </div>
+        `;
+        await sendEmailViaBrevo(proEmail, `Action Required: Feedback Review for ${ticketId}`, html);
+        
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to send warning' });
     }
 });
 
