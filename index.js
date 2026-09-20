@@ -1266,6 +1266,26 @@ app.get('/api/gallery/public', async (req, res) => {
     }
 });
 
+// 4. CRM Approves Image
+app.post('/api/crm/gallery/approve', async (req, res) => {
+    try {
+        await pool.query("UPDATE gallery_submissions SET is_approved = true WHERE id = $1", [req.body.id]);
+        res.json({ success: true });
+    } catch (err) { 
+        res.status(500).json({ error: 'Failed to approve image.' }); 
+    }
+});
+
+// 5. CRM Rejects/Deletes Image
+app.post('/api/crm/gallery/reject', async (req, res) => {
+    try {
+        await pool.query("DELETE FROM gallery_submissions WHERE id = $1", [req.body.id]);
+        res.json({ success: true });
+    } catch (err) { 
+        res.status(500).json({ error: 'Failed to reject image.' }); 
+    }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Momento Server running and exposed on port ${PORT}`);
 });
