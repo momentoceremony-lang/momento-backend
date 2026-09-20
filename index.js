@@ -159,14 +159,19 @@ async function initializeDB() {
             -- NEW: CRM VERIFIED GALLERY SUBMISSIONS
             CREATE TABLE IF NOT EXISTS gallery_submissions (
                 id SERIAL PRIMARY KEY,
-                photographer_id INT REFERENCES photographers(id) ON DELETE SET NULL, -- Keeps image if artist quits
+                photographer_id INT REFERENCES photographers(id) ON DELETE SET NULL,
                 image_url TEXT NOT NULL,
-                category VARCHAR(50) NOT NULL,
+                category VARCHAR(100) NOT NULL,
                 is_approved BOOLEAN DEFAULT FALSE,
                 approved_by VARCHAR(50),
                 approved_at TIMESTAMP,
                 submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            
+            -- FORCED FIX: Guarantee these columns exist if the table was created previously
+            ALTER TABLE gallery_submissions ADD COLUMN IF NOT EXISTS approved_by VARCHAR(50);
+            ALTER TABLE gallery_submissions ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP;
+            ALTER TABLE gallery_submissions ALTER COLUMN category TYPE VARCHAR(100);
             
             -- Retroactively update already verified pros to avoid breaking existing accounts
             UPDATE photographers SET account_status = 'approved' WHERE is_verified = true AND (account_status = 'pending' OR account_status IS NULL);
