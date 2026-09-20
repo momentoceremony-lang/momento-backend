@@ -602,10 +602,20 @@ app.post('/api/crm/login', async (req, res) => {
         const user = userRes.rows[0];
         const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET || 'momento_fallback', { expiresIn: '12h' });
         
+        // FIXED: Now passes all permission flags to the frontend!
         res.json({ 
             success: true, 
             token, 
-            user: { username: user.username, role: user.role, must_reset: user.must_reset_password } 
+            user: { 
+                username: user.username, 
+                role: user.role, 
+                must_reset: user.must_reset_password,
+                full_name: user.full_name,
+                p_verification: user.p_verification,
+                p_bookings: user.p_bookings,
+                p_feedback: user.p_feedback,
+                p_gallery: user.p_gallery
+            } 
         });
     } catch (err) {
         res.status(500).json({ error: 'CRM Login Error' });
