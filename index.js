@@ -1291,6 +1291,41 @@ app.post('/api/crm/gallery/reject', async (req, res) => {
     }
 });
 
+// ==========================================
+// ONE-TIME MIGRATION: OLD GALLERY TO CRM
+// ==========================================
+app.post('/api/crm/system/migrate-gallery', async (req, res) => {
+    try {
+        // Fetch all photographers who have a gallery
+        const pros = await pool.query("SELECT id, gallery FROM photographers WHERE gallery IS NOT NULL AND jsonb_array_length(gallery) > 0");
+
+        let migratedCount = 0;
+
+        for (let pro of pros.rows) {
+            const galleryArray = pro.gallery; 
+            for (let item of galleryArray) {
+                // Handle both old String arrays and new Object arrays safely
+                const imgUrl = typeof item === 'string' ? item : item.url;
+                const imgCat = typeof item === 'string' ? 'Uncategorized' : (item.category || 'Uncategorized');
+
+                // Check if it already exists in the CRM so we don't duplicate
+                const check = await pool.query("SELECT id FROM gallery_submissions WHERE image_url = $1", [imgUrl]);
+                if (check.rows.length === 0) {
+                    await pool.query(
+                        "INSERT INTO gallery_submissions (photographer_id, image_url, category, is_approved) VALUES ($1, $2, $3, false)",
+                        [pro.id, imgUrl, imgCat]
+                    );
+                    migratedCount++;
+                }
+            }
+        }
+        res.json({ success: true, count: migratedCount });
+    } catch (err) {
+        console.error("Migration Error:", err);
+        res.status(500).json({ error: 'Migration failed.' });
+    }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Momento Server running and exposed on port ${PORT}`);
 });
