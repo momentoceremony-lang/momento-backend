@@ -457,8 +457,16 @@ app.post('/api/pro/profile', async (req, res) => {
 // ==========================================
 app.get('/api/photographers', async (req, res) => {
     try {
-        // ADDED: "AND is_verified = true" to protect the public frontend
-        const result = await pool.query('SELECT id, name, bio, dp_url, banner_url, specialties, best_shots, gallery, pricing, pro_type as "proType" FROM photographers WHERE dp_url IS NOT NULL AND is_verified = true');
+        const query = `
+            SELECT p.id, p.name, p.bio, p.dp_url, p.banner_url, p.specialties, p.best_shots, p.gallery, p.pricing, p.pro_type as "proType",
+                   COALESCE(AVG(b.rating) FILTER (WHERE b.rating > 0), 0) as avg_rating,
+                   COUNT(b.rating) FILTER (WHERE b.rating > 0) as review_count
+            FROM photographers p
+            LEFT JOIN bookings b ON p.id = b.photographer_id
+            WHERE p.dp_url IS NOT NULL AND p.is_verified = true
+            GROUP BY p.id
+        `;
+        const result = await pool.query(query);
         res.json({ success: true, data: result.rows });
     } catch (error) {
         console.error('Fetch Pros Error:', error);
@@ -471,7 +479,16 @@ app.get('/api/photographers', async (req, res) => {
 // ==========================================
 app.get('/api/pro/profile/:id', async (req, res) => {
     try {
-        const result = await pool.query('SELECT id, name, email, phone, bio, dp_url, banner_url, specialties, best_shots, gallery, pricing, pro_type as "proType", is_verified, account_status, bank_account, ifsc_code FROM photographers WHERE id = $1', [req.params.id]);
+        const query = `
+            SELECT p.id, p.name, p.email, p.phone, p.bio, p.dp_url, p.banner_url, p.specialties, p.best_shots, p.gallery, p.pricing, p.pro_type as "proType", p.is_verified, p.account_status, p.bank_account, p.ifsc_code,
+                   COALESCE(AVG(b.rating) FILTER (WHERE b.rating > 0), 0) as avg_rating,
+                   COUNT(b.rating) FILTER (WHERE b.rating > 0) as review_count
+            FROM photographers p
+            LEFT JOIN bookings b ON p.id = b.photographer_id
+            WHERE p.id = $1
+            GROUP BY p.id
+        `;
+        const result = await pool.query(query, [req.params.id]);
         if (result.rows.length === 0) return res.status(404).json({ error: 'Profile not found' });
         res.json({ success: true, data: result.rows[0] });
     } catch (error) {
