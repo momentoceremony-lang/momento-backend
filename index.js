@@ -155,6 +155,16 @@ async function initializeDB() {
                 role VARCHAR(20) NOT NULL,
                 must_reset_password BOOLEAN DEFAULT TRUE
             );
+
+            -- NEW: CRM VERIFIED GALLERY SUBMISSIONS
+            CREATE TABLE IF NOT EXISTS gallery_submissions (
+                id SERIAL PRIMARY KEY,
+                photographer_id INT REFERENCES photographers(id) ON DELETE CASCADE,
+                image_url TEXT NOT NULL,
+                category VARCHAR(50) NOT NULL,
+                is_approved BOOLEAN DEFAULT FALSE,
+                submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
             
             -- Retroactively update already verified pros to avoid breaking existing accounts
             UPDATE photographers SET account_status = 'approved' WHERE is_verified = true AND (account_status = 'pending' OR account_status IS NULL);
@@ -1199,6 +1209,60 @@ app.post('/api/crm/feedback/warning', async (req, res) => {
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: 'Failed to send warning' });
+    }
+});
+
+// ==========================================
+// 20. CRM VERIFIED GALLERY ENGINE
+// ==========================================
+
+// 1. Pro Submits an Image to the Gallery
+app.post('/api/gallery/submit', async (req, res) => {
+    const { proId, imageUrl, category } = req.body;
+    try {
+        await pool.query(
+            "INSERT INTO gallery_submissions (photographer_id, image_url, category) VALUES ($1, $2, $3)", 
+            [proId, imageUrl, category]
+        );
+        res.json({ success: true });
+    } catch (error) {
+        console.error("Gallery Submit Error:", error);
+        res.status(500).json({ error: 'Failed to submit image for review.' });
+    }
+});
+
+// 2. CRM Fetches Pending Images for Review
+app.get('/api/crm/gallery/pending', async (req, res) => {
+    try {
+        const query = `
+            SELECT g.id, g.image_url, g.category, g.submitted_at, 
+                   p.name as pro_name, p.dp_url
+            FROM gallery_submissions g
+            JOIN photographers p ON g.photographer_id = p.id
+            WHERE g.is_approved = false
+            ORDER BY g.submitted_at DESC
+        `;
+        const result = await pool.query(query);
+        res.json({ success: true, data: result.rows });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch pending gallery images.' });
+    }
+});
+
+// 3. Public View.html Fetches ALL Approved Images
+app.get('/api/gallery/public', async (req, res) => {
+    try {
+        const query = `
+            SELECT g.image_url, g.category, p.id as pro_id, p.name as pro_name, p.dp_url 
+            FROM gallery_submissions g
+            JOIN photographers p ON g.photographer_id = p.id
+            WHERE g.is_approved = true AND p.is_verified = true
+            ORDER BY g.submitted_at DESC
+        `;
+        const result = await pool.query(query);
+        res.json({ success: true, data: result.rows });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch public gallery.' });
     }
 });
 
