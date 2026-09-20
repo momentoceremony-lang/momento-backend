@@ -159,10 +159,12 @@ async function initializeDB() {
             -- NEW: CRM VERIFIED GALLERY SUBMISSIONS
             CREATE TABLE IF NOT EXISTS gallery_submissions (
                 id SERIAL PRIMARY KEY,
-                photographer_id INT REFERENCES photographers(id) ON DELETE CASCADE,
+                photographer_id INT REFERENCES photographers(id) ON DELETE SET NULL, -- Keeps image if artist quits
                 image_url TEXT NOT NULL,
                 category VARCHAR(50) NOT NULL,
                 is_approved BOOLEAN DEFAULT FALSE,
+                approved_by VARCHAR(50),
+                approved_at TIMESTAMP,
                 submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             
@@ -1231,32 +1233,31 @@ app.post('/api/gallery/submit', async (req, res) => {
     }
 });
 
-// 2. CRM Fetches Pending Images for Review
-app.get('/api/crm/gallery/pending', async (req, res) => {
+// 2. CRM Fetches ALL Images (Pending & Approved)
+app.get('/api/crm/gallery/all', async (req, res) => {
     try {
         const query = `
-            SELECT g.id, g.image_url, g.category, g.submitted_at, 
+            SELECT g.id, g.image_url, g.category, g.is_approved, g.submitted_at, g.approved_by, g.approved_at,
                    p.name as pro_name, p.dp_url
             FROM gallery_submissions g
-            JOIN photographers p ON g.photographer_id = p.id
-            WHERE g.is_approved = false
+            LEFT JOIN photographers p ON g.photographer_id = p.id
             ORDER BY g.submitted_at DESC
         `;
         const result = await pool.query(query);
         res.json({ success: true, data: result.rows });
     } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch pending gallery images.' });
+        res.status(500).json({ error: 'Failed to fetch gallery images.' });
     }
 });
 
-// 3. Public View.html Fetches ALL Approved Images
+// 3. Public View.html Fetches ALL Approved Images (Even if artist quit)
 app.get('/api/gallery/public', async (req, res) => {
     try {
         const query = `
             SELECT g.image_url, g.category, p.id as pro_id, p.name as pro_name, p.dp_url 
             FROM gallery_submissions g
-            JOIN photographers p ON g.photographer_id = p.id
-            WHERE g.is_approved = true AND p.is_verified = true
+            LEFT JOIN photographers p ON g.photographer_id = p.id
+            WHERE g.is_approved = true AND (p.id IS NULL OR p.is_verified = true)
             ORDER BY g.submitted_at DESC
         `;
         const result = await pool.query(query);
@@ -1266,10 +1267,14 @@ app.get('/api/gallery/public', async (req, res) => {
     }
 });
 
-// 4. CRM Approves Image
+// 4. CRM Approves Image (Tracks Admin)
 app.post('/api/crm/gallery/approve', async (req, res) => {
+    const { id, adminName } = req.body;
     try {
-        await pool.query("UPDATE gallery_submissions SET is_approved = true WHERE id = $1", [req.body.id]);
+        await pool.query(
+            "UPDATE gallery_submissions SET is_approved = true, approved_by = $1, approved_at = CURRENT_TIMESTAMP WHERE id = $2", 
+            [adminName, id]
+        );
         res.json({ success: true });
     } catch (err) { 
         res.status(500).json({ error: 'Failed to approve image.' }); 
